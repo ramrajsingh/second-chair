@@ -58,16 +58,25 @@ class Voice:
 
     def transcribe(self, audio: bytes, filename: str = "turn.webm", codec: str = "webm",
                    keyterms: list[str] | None = None) -> Heard:
-        terms = (KEYTERMS + (keyterms or []))[:50]
-        extra = {"keyterms": terms} if config.SARVAM_STT_MODEL == "saaras:v4" else {}
-        stt = self.client.speech_to_text.transcribe(
-            file=(filename, audio),
-            model=config.SARVAM_STT_MODEL,
+        # Sarvam rejects keyterms containing commas/semicolons (live company and investor names can have them),
+        # so clean each term, and if the hints are still refused, transcribe without them rather than lose audio.
+        terms = []
+        for t in KEYTERMS + (keyterms or []):
+            t = re.sub(r"\s*\(.*?\)", "", str(t)).split(",")[0].split(";")[0].strip()
+            if t and len(t) <= 60 and t not in terms:
+                terms.append(t)
+        call = lambda extra: self.client.speech_to_text.transcribe(
+            file=(filename, audio), model=config.SARVAM_STT_MODEL,
             mode="transcribe",          # keep the caller's own words; we translate separately
             language_code="unknown",    # auto-detect
-            input_audio_codec=codec,
-            **extra,
-        )
+            input_audio_codec=codec, **extra)
+        if config.SARVAM_STT_MODEL == "saaras:v4" and terms:
+            try:
+                stt = call({"keyterms": terms[:50]})
+            except Exception:
+                stt = call({})
+        else:
+            stt = call({})
         lang = stt.language_code or "en-IN"
         return Heard(original=stt.transcript, language=lang, english=self.to_english(stt.transcript, lang))
 

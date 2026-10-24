@@ -11,9 +11,13 @@ the hot path).
 """
 
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 from app import crustdata
 from app.neo import Neo, company_key
+
+
+_POOL = ThreadPoolExecutor(max_workers=8)
 
 
 def _first(v):
@@ -84,22 +88,27 @@ def load_person(db: Neo, profile: dict, founded_key: str | None = None) -> str:
             MERGE (p)-[:HAS_SKILL]->(k)""", {"pid": pid, "skills": skills[:60]})
     for gh in profile.get("dev_platform_profiles") or []:
         load_github(db, pid, gh)
-    for j in _jobs(profile):
+    # One round trip per list (each Aura round trip is ~100 ms).
+    jobs = [{"ckey": company_key(j["name"], j["domain"]), "cname": j["name"], "domain": j["domain"],
+             "title": j["title"], "start": j["start"] or "", "end": j["end"], "current": j["current"],
+             "seniority": j["seniority"]} for j in _jobs(profile) if j["name"]]
+    if jobs:
         db.query("""
             MATCH (p:Person {pid: $pid})
-            MERGE (c:Company {key: $ckey}) ON CREATE SET c.name = $cname, c.domain = $domain
-            MERGE (p)-[w:WORKED_AT {title: $title, start: $start}]->(c)
-            SET w.end = $end, w.current = $current, w.seniority = $seniority""", {
-            "pid": pid, "ckey": company_key(j["name"], j["domain"]), "cname": j["name"], "domain": j["domain"],
-            "title": j["title"], "start": j["start"] or "", "end": j["end"], "current": j["current"],
-            "seniority": j["seniority"]})
-    for s in ((profile.get("education") or {}).get("schools") or []):
+            UNWIND $jobs AS j
+            MERGE (c:Company {key: j.ckey}) ON CREATE SET c.name = j.cname, c.domain = j.domain
+            MERGE (p)-[w:WORKED_AT {title: j.title, start: j.start}]->(c)
+            SET w.end = j.end, w.current = j.current, w.seniority = j.seniority""", {"pid": pid, "jobs": jobs})
+    schools = [{"school": s.get("school"), "degree": s.get("degree"), "field": s.get("field_of_study"),
+                "sy": s.get("start_year"), "ey": s.get("end_year")}
+               for s in ((profile.get("education") or {}).get("schools") or []) if s.get("school")]
+    if schools:
         db.query("""
-            MATCH (p:Person {pid: $pid}) MERGE (s:School {name: $school})
-            MERGE (p)-[r:STUDIED_AT]->(s) SET r.degree = $degree, r.field = $field,
-                r.start_year = $sy, r.end_year = $ey""", {
-            "pid": pid, "school": s.get("school"), "degree": s.get("degree"), "field": s.get("field_of_study"),
-            "sy": s.get("start_year"), "ey": s.get("end_year")})
+            MATCH (p:Person {pid: $pid})
+            UNWIND $schools AS e
+            MERGE (s:School {name: e.school})
+            MERGE (p)-[r:STUDIED_AT]->(s) SET r.degree = e.degree, r.field = e.field,
+                r.start_year = e.sy, r.end_year = e.ey""", {"pid": pid, "schools": schools})
     if founded_key:
         db.query("MATCH (p:Person {pid: $pid}), (c:Company {key: $ckey}) MERGE (p)-[:FOUNDED]->(c)",
                  {"pid": pid, "ckey": founded_key})
@@ -145,7 +154,7 @@ def load_github(db: Neo, pid: str, gh: dict):
             MERGE (g)-[:MEMBER_OF]->(org)""", {"url": url, "orgs": orgs})
 
 
-def load_company(db: Neo, data: dict) -> str:
+def load_company(db: Neo, data: dict, skip_founders: set[str] | None = None) -> str:
     basic = data.get("basic_info") or {}
     ckey = company_key(basic.get("name"), _domain(basic.get("primary_domain")))
     head = data.get("headcount") or {}
@@ -183,8 +192,10 @@ def load_company(db: Neo, data: dict) -> str:
             MERGE (i)-[r:INVESTED_IN]->(f) SET r.lead = inv IN $leads""", {
             "ckey": ckey, "date": date, "amount": m.get("amount_usd"), "round": m.get("round_type"),
             "investors": _list(m.get("investors")), "leads": _list(m.get("lead_investors"))})
-    for founder in ((data.get("people") or {}).get("founders") or []):
-        load_person(db, founder, founded_key=ckey)
+    # Founders not already loaded from richer person-enrichment profiles come from the company data.
+    founders = [f for f in (data.get("people") or {}).get("founders") or []
+                if _person_id(f) not in (skip_founders or set())]
+    list(_POOL.map(lambda f: load_person(db, f, founded_key=ckey), founders))
     return ckey
 
 
@@ -194,13 +205,13 @@ def build(db: Neo, company_domain: str, founder_urls: list[str] | None = None) -
     company = crustdata.enrich_company(company_domain)
     if not company:
         raise ValueError(f"Crustdata has no company for {company_domain!r}")
-    ckey = load_company(db, company)
     founders = (company.get("people") or {}).get("founders") or []
     if not founder_urls and crustdata.config.CRUSTDATA_API_KEY:
         # Founder profiles inside company data have no skills/GitHub/authenticity; enrich them all in one call.
         founder_urls = [u for u in (_profile_url(f) for f in founders) if u]
-    pids = [load_person(db, p, founded_key=ckey) for p in crustdata.enrich_people(founder_urls)] \
-        if founder_urls else []
+    enriched = crustdata.enrich_people(founder_urls) if founder_urls else []
+    ckey = load_company(db, company, skip_founders={_person_id(p) for p in enriched})
+    pids = list(_POOL.map(lambda p: load_person(db, p, founded_key=ckey), enriched))
     if not pids:  # default to the founders Crustdata lists for the company
         pids = [_person_id(f) for f in founders]
     return {"company_key": ckey, "person_pid": pids[0] if pids else None}
