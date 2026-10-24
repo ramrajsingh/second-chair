@@ -103,7 +103,9 @@ statement must cite its source as [Crustdata: <field>] or [Call: <speaker quote>
 NUMERIC_TYPES = ["headcount", "growth", "funding_total", "funding_round", "hiring"]
 
 EVASION_PROMPT = """You judge a candidate's answer on a diligence or interview call. First decide whether the interviewer's line is
-a question that asks for specific information (a number, a fact, a name, a yes/no). If not, return is_question=false.
+a question that asks for specific information (a number, a fact, a name, a yes/no). Open-ended prompts ("tell me about
+your background", "walk me through the company", "how did you get here?") and small talk are NOT: return
+is_question=false for them, since any reasonable answer is fine.
 If it is, judge the answer so far:
 - answered: it gives the information asked for (even if unflattering)
 - partial: it touches the topic but leaves out the specific thing asked (e.g. no number when a number was asked)
@@ -163,7 +165,8 @@ class ClaimEngine:
         resp = self.llm.chat.completions.create(
             model=config.OPENAI_FAST_MODEL,
             messages=[{"role": "system", "content": EXTRACT_PROMPT},
-                      {"role": "user", "content": f"Context: {context}\nUtterance: {text}"}],
+                      {"role": "user", "content": f"Today is {date.today().isoformat()} (resolve 'this May', "
+                                                  f"'last year' etc. against it). Context: {context}\nUtterance: {text}"}],
             response_format={"type": "json_schema", "json_schema": {"name": "claims", "strict": True,
                                                                     "schema": CLAIM_SCHEMA}})
         out = json.loads(resp.choices[0].message.content or "{}")
@@ -198,17 +201,23 @@ class ClaimEngine:
         return None
 
     def _check_headcount(self, c, ckey, pid, log):
+        # Latest point of the headcount history; young companies may only have a current headcount.
         rows = self.db.query("""
-            MATCH (co:Company {key: $ckey})-[:HEADCOUNT]->(h:HeadcountPoint)
-            RETURN co.name AS company, h.count AS count, toString(h.date) AS date ORDER BY h.date DESC LIMIT 1""",
-                             {"ckey": ckey}, log, "headcount: latest point")
-        if not rows or c["number"] is None:
+            MATCH (co:Company {key: $ckey})
+            OPTIONAL MATCH (co)-[:HEADCOUNT]->(h:HeadcountPoint) WHERE h.count IS NOT NULL
+            WITH co, h ORDER BY h.date DESC LIMIT 1
+            RETURN co.name AS company, coalesce(h.count, co.headcount) AS count, toString(h.date) AS date,
+                   h IS NULL AS current_only""", {"ckey": ckey}, log, "headcount: latest point")
+        if not rows or rows[0]["count"] is None or c["number"] is None:
             return {"status": "unverifiable", "finding": "No headcount data.", "evidence": []}
-        actual, claimed = rows[0]["count"], c["number"]
+        r = rows[0]
+        actual, claimed = r["count"], c["number"]
         ok = abs(claimed - actual) / max(actual, 1) <= 0.2
+        when = "currently" if r["current_only"] else f"as of {r['date']}"
+        src = "Crustdata headcount.total" if r["current_only"] else "Crustdata headcount.timeseries"
         return {"status": "verified" if ok else "contradicted",
-                "finding": f"Claimed {claimed:g}; Crustdata headcount is {actual} as of {rows[0]['date']}.",
-                "evidence": [{"source": "Crustdata headcount.timeseries", "value": f"{actual} on {rows[0]['date']}"}]}
+                "finding": f"Claimed {claimed:g}; Crustdata headcount is {actual} {when}.",
+                "evidence": [{"source": src, "value": f"{actual} {when}"}]}
 
     def _check_growth(self, c, ckey, pid, log):
         months = c["period_months"] or 12

@@ -210,6 +210,8 @@ def utterance(sid: str, channel: str = Form(...), audio: UploadFile | None = Fil
         for c in extracted["claims"]:
             if c["type"] == "funding_round" and c["number"] is None and not c["investor"] and not c["round_type"]:
                 continue  # a round mentioned with nothing checkable
+            if c["type"] in ("headcount", "growth", "funding_total") and c["number"] is None:
+                continue  # no number to check
             if signature(c) not in s["seen"]:  # a claim repeated later in the call is checked once
                 s["seen"].add(signature(c))
                 claims.append(c)

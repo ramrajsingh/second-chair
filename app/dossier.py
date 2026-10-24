@@ -243,7 +243,7 @@ def summary(db: Neo, ckey: str, pid: str | None) -> dict:
         MATCH (c:Company {key: $ckey})
         OPTIONAL MATCH (c)-[:HEADCOUNT]->(h:HeadcountPoint)
         WITH c, h ORDER BY h.date
-        WITH c, collect({date: toString(h.date), count: h.count}) AS series
+        WITH c, [x IN collect({date: toString(h.date), count: h.count}) WHERE x.date IS NOT NULL] AS series
         OPTIONAL MATCH (c)-[:RAISED]->(f:FundingRound)<-[r:INVESTED_IN]-(i:Investor)
         WITH c, series, f, collect(CASE WHEN r.lead THEN i.name + ' (lead)' ELSE i.name END) AS investors
         ORDER BY f.date
