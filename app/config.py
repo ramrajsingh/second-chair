@@ -24,6 +24,8 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1")
 # Claim spotting runs on every utterance, so it uses a faster model.
 OPENAI_FAST_MODEL = os.environ.get("OPENAI_FAST_MODEL", "gpt-4.1-mini")
+# Whispers are one templated sentence, so the smallest model is enough.
+OPENAI_WHISPER_MODEL = os.environ.get("OPENAI_WHISPER_MODEL", "gpt-4.1-mini")
 
 # Languages Bulbul can speak (used by app/voice.py).
 TTS_LANGUAGES = {"en-IN", "hi-IN", "bn-IN", "ta-IN", "te-IN", "kn-IN", "ml-IN", "mr-IN", "gu-IN", "pa-IN", "od-IN"}

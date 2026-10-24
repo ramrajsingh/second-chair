@@ -30,6 +30,8 @@ checked against company and people data. Only extract concrete, checkable claims
 - investor: a named backer ("Peak Harbor led our A") -> investor
 - hiring: hiring activity ("we're hiring 30 engineers") -> number of open roles
 - shared_history: worked with someone before ("my co-founder and I worked together at Flipkart") -> person, company
+Extract claims ONLY from the Utterance. The context is only for resolving references like "we", "she" or
+"the company"; never re-extract claims that appear in the context.
 Ignore opinions, plans and vague statements. Return an empty list if there are no checkable claims.
 Use null for unknown fields. The speaker may mix Hindi and English; output English."""
 
@@ -74,6 +76,15 @@ SENIORITY = [("intern", 0), ("engineer", 1), ("developer", 1), ("analyst", 1), (
 def _seniority(title: str) -> int:
     t = (title or "").lower()
     return max([lvl for word, lvl in SENIORITY if re.search(rf"\b{word}\b", t)], default=1)
+
+
+def signature(c: dict) -> tuple:
+    """Identity of a claim, so the same claim repeated later in a call is checked (and whispered) once."""
+    norm = lambda v: " ".join(str(v).lower().split()) if v is not None else None
+    t = "investor" if c["type"] == "funding_round" and c["number"] is None and c["investor"] else c["type"]
+    if t in ("headcount", "growth", "funding_total", "hiring"):
+        return (t,)
+    return (t, norm(c["company"]), norm(c["investor"]), norm(c["round_type"]), norm(c["person"]))
 
 
 def _usd(n: float | None) -> str:
@@ -241,11 +252,14 @@ class ClaimEngine:
 
     # --- Output ----------------------------------------------------------
     def whisper(self, claim: dict, verdict: dict) -> str:
-        resp = self.llm.chat.completions.create(
-            model=config.OPENAI_FAST_MODEL,
-            messages=[{"role": "system", "content": WHISPER_PROMPT},
-                      {"role": "user", "content": f"Claim: {claim['statement']}\nData: {verdict['finding']}"}])
-        return (resp.choices[0].message.content or "").strip()
+        try:
+            resp = self.llm.chat.completions.create(
+                model=config.OPENAI_WHISPER_MODEL, max_tokens=60,
+                messages=[{"role": "system", "content": WHISPER_PROMPT},
+                          {"role": "user", "content": f"Claim: {claim['statement']}\nData: {verdict['finding']}"}])
+            return (resp.choices[0].message.content or "").strip() or verdict["finding"]
+        except Exception:  # never lose a contradiction because the phrasing call failed
+            return verdict["finding"]
 
     def record(self, sid: str, utterance_id: str, claim: dict, verdict: dict, whisper: str | None, cypher: list) -> str:
         cid = uuid.uuid4().hex[:12]

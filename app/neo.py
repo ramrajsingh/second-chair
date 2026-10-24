@@ -17,7 +17,9 @@ class Neo:
     def __init__(self):
         if not config.NEO4J_URI:
             raise GraphError("NEO4J_URI is not set in .env")
-        self.driver = GraphDatabase.driver(config.NEO4J_URI, auth=(config.NEO4J_USERNAME, config.NEO4J_PASSWORD))
+        # Notifications off: early queries reference labels that don't exist yet, which only warns.
+        self.driver = GraphDatabase.driver(config.NEO4J_URI, auth=(config.NEO4J_USERNAME, config.NEO4J_PASSWORD),
+                                           notifications_min_severity="OFF")
 
     def query(self, cypher: str, params: dict | None = None, log: list | None = None,
               label: str = "") -> list[dict[str, Any]]:

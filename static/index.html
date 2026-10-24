@@ -154,10 +154,13 @@ function addClaim(c) {
     <div class="src">Source: ${c.evidence.map((e) => esc(e.source) + " = " + esc(e.value)).join("; ") || "none"}</div>
     ${c.cypher.length ? `<details><summary style="font-size:12px;cursor:pointer">Cypher (${c.cypher.map((q) => q.ms + "ms").join(", ")})</summary>${c.cypher.map((q) => `<code>${esc(q.cypher)}</code>`).join("")}</details>` : ""}`;
   $("claims").prepend(d);
-  if (c.whisper) {
+  if (c.whisper_pending) {
     $("whisper").style.display = "block";
-    $("whisper").innerHTML = `🎧 ${esc(c.whisper)}<small>whispered to interviewer · ${esc(c.type)} contradiction</small>`;
-    play(c.whisper_audio);
+    $("whisper").innerHTML = `🎧 ${esc(c.finding)}<small>preparing whisper · ${esc(c.type)} contradiction</small>`;
+    api(`/api/session/${sid}/whisper/${c.id}`).then((w) => {
+      $("whisper").innerHTML = `🎧 ${esc(w.text)}<small>whispered to interviewer · ${esc(c.type)} contradiction</small>`;
+      play(w.audio);
+    }).catch(() => {});
   }
 }
 

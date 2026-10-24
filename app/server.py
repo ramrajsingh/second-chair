@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app import config, dossier
-from app.claims import ClaimEngine
+from app.claims import ClaimEngine, signature
 from app.crustdata import CrustdataError
 from app.neo import GraphError, Neo, setup_schema
 from app.voice import Voice
@@ -74,12 +74,12 @@ def prepare(req: Prepare):
     open_items = db.query("""
         MATCH (s:Session)-[:HAS_UTTERANCE]->(:Utterance)-[:MADE_CLAIM]->(c:Claim {status: 'contradicted'})
         WHERE s.id <> $sid AND (s.person = $pid OR s.company = $ckey)
-        RETURN c.statement AS claim, c.finding AS finding, toString(date(s.started_at)) AS call_date
-        ORDER BY s.started_at DESC LIMIT 5""", {"sid": sid, "pid": keys["person_pid"], "ckey": keys["company_key"]})
+        WITH c.finding AS finding, collect(c.statement)[0] AS claim, max(s.started_at) AS last
+        RETURN claim, finding, toString(date(last)) AS call_date ORDER BY last DESC LIMIT 5""", {"sid": sid, "pid": keys["person_pid"], "ckey": keys["company_key"]})
     names = [card["company"]["name"]] + [f["name"] for f in card["founders"]] + \
             [i.split(" (")[0] for r in card["rounds"] for i in r["investors"]]
-    sessions[sid] = {**keys, "seq": 0, "recent": [], "keyterms": sorted(set(n for n in names if n)),
-                     "context": f"Diligence call with {card['person']['name'] if card['person'] else 'a founder'} "
+    sessions[sid] = {**keys, "seq": 0, "recent": [], "seen": set(), "keyterms": sorted(set(n for n in names if n)),
+                     "context": f"Diligence call with {card['person']['person']['name'] if card['person'] else 'a founder'} "
                                 f"of {card['company']['name']}."}
     return {"session_id": sid, "dossier": card, "open_items": open_items, "graph": graph(sid)["graph"],
             "live_data": bool(config.CRUSTDATA_API_KEY), "ms": int((time.time() - t0) * 1000)}
@@ -118,30 +118,52 @@ def utterance(sid: str, channel: str = Form(...), audio: UploadFile | None = Fil
                original: $original, language: $lang, at: datetime()})""",
              {"sid": sid, "uid": uid, "seq": s["seq"], "channel": channel, "text": heard.english,
               "original": heard.original, "lang": heard.language})
-    context = s["context"] + " Recent: " + " | ".join(s["recent"][-4:])
+    context = s["context"] + " Previous line: " + (s["recent"][-1] if s["recent"] else "none")
     s["recent"].append(f"{channel}: {heard.english}")
 
     results = []
     if channel == "subject":
         t = time.time()
-        claims = engine.extract(heard.english, context)
+        claims = []
+        for c in engine.extract(heard.english, context):
+            if signature(c) not in s["seen"]:  # a claim repeated later in the call is checked once
+                s["seen"].add(signature(c))
+                claims.append(c)
         timing["extract"] = int((time.time() - t) * 1000)
         t = time.time()
 
         def check(c):
             cypher: list = []
             verdict = engine.verify(c, s["company_key"], s["person_pid"], cypher)
-            whisper = engine.whisper(c, verdict) if verdict["status"] == "contradicted" else None
-            audio_chunks = voice.speak(whisper, "en-IN")[0] if whisper else []
-            cid = engine.record(sid, uid, c, verdict, whisper, cypher)
-            return {"id": cid, **c, **verdict, "whisper": whisper, "whisper_audio": audio_chunks, "cypher": cypher}
+            cid = engine.record(sid, uid, c, verdict, None, cypher)
+            if verdict["status"] == "contradicted":
+                # The card goes back now; the spoken whisper is prepared in the background
+                # and fetched by the page from /whisper/{cid}.
+                s.setdefault("whispers", {})[cid] = POOL.submit(_whisper, cid, c, verdict)
+            return {"id": cid, **c, **verdict, "whisper_pending": verdict["status"] == "contradicted",
+                    "cypher": cypher}
 
         results = list(POOL.map(check, claims))
-        timing["verify+whisper"] = int((time.time() - t) * 1000)
+        timing["verify"] = int((time.time() - t) * 1000)
     return {"utterance": {"id": uid, "channel": channel, "text": heard.english, "original": heard.original,
                           "language": heard.language},
             "claims": results, "subject_audio": subject_audio.result() if subject_audio else [],
             "timing_ms": timing}
+
+
+def _whisper(cid: str, claim: dict, verdict: dict) -> dict:
+    text = engine.whisper(claim, verdict)
+    db.query("MATCH (c:Claim {id: $cid}) SET c.whisper = $text", {"cid": cid, "text": text})
+    return {"text": text, "audio": voice.speak(text, "en-IN")[0]}
+
+
+@app.get("/api/session/{sid}/whisper/{cid}")
+def whisper(sid: str, cid: str):
+    """Wait for a contradiction's whisper (text + speech), prepared right after the verdict."""
+    fut = sessions.get(sid, {}).get("whispers", {}).get(cid)
+    if not fut:
+        raise HTTPException(404, "No whisper for this claim")
+    return fut.result(timeout=30)
 
 
 @app.get("/api/session/{sid}/graph")
