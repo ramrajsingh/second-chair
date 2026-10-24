@@ -143,8 +143,8 @@ def utterance(sid: str, channel: str = Form(...), audio: UploadFile | None = Fil
         t = time.time()
         claims = []
         for c in engine.extract(heard.english, context):
-            if c["type"] == "funding_round" and c["number"] is None and not c["investor"]:
-                continue  # a round mentioned with nothing checkable (no amount, no investor)
+            if c["type"] == "funding_round" and c["number"] is None and not c["investor"] and not c["round_type"]:
+                continue  # a round mentioned with nothing checkable
             if signature(c) not in s["seen"]:  # a claim repeated later in the call is checked once
                 s["seen"].add(signature(c))
                 claims.append(c)

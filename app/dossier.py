@@ -14,10 +14,38 @@ from app import crustdata
 from app.neo import Neo, company_key
 
 
+def _first(v):
+    return (v[0] if v else None) if isinstance(v, list) else v
+
+
+def _domain(v) -> str | None:
+    v = _first(v)
+    return v.lower().split("://")[-1].removeprefix("www.").split("/")[0].split("?")[0] if v else None
+
+
+def _list(v) -> list[str]:
+    """Investor lists arrive as arrays or as comma-separated text depending on the endpoint."""
+    if isinstance(v, str):
+        return [x.strip() for x in v.split(",") if x.strip()]
+    return [x for x in (v or []) if x]
+
+
+def _norm_job(j: dict, current: bool) -> dict:
+    # Person enrichment uses name/title/start_date; founder profiles inside company enrichment use
+    # employer_name/employee_title/employee_start_date. Dates are trimmed to YYYY-MM-DD.
+    day = lambda d: d[:10] if d else None
+    return {"name": j.get("name") or j.get("employer_name"),
+            "domain": _domain(j.get("company_website_domain") or j.get("employer_website") or j.get("company_website")),
+            "title": j.get("title") or j.get("employee_title") or "",
+            "start": day(j.get("start_date") or j.get("employee_start_date")),
+            "end": day(j.get("end_date") or j.get("employee_end_date")),
+            "seniority": j.get("seniority_level"), "current": current}
+
+
 def _jobs(profile: dict) -> list[dict]:
     details = ((profile or {}).get("experience") or {}).get("employment_details") or {}
-    jobs = [{**j, "current": True} for j in details.get("current") or []]
-    return jobs + [{**j, "current": False} for j in details.get("past") or []]
+    return [_norm_job(j, True) for j in details.get("current") or []] + \
+           [_norm_job(j, False) for j in details.get("past") or []]
 
 
 def _person_id(profile: dict) -> str:
@@ -40,10 +68,9 @@ def load_person(db: Neo, profile: dict, founded_key: str | None = None) -> str:
             MERGE (c:Company {key: $ckey}) ON CREATE SET c.name = $cname, c.domain = $domain
             MERGE (p)-[w:WORKED_AT {title: $title, start: $start}]->(c)
             SET w.end = $end, w.current = $current, w.seniority = $seniority""", {
-            "pid": pid, "ckey": company_key(j.get("name"), j.get("company_website_domain")),
-            "cname": j.get("name"), "domain": j.get("company_website_domain"), "title": j.get("title") or "",
-            "start": j.get("start_date") or "", "end": j.get("end_date"), "current": j["current"],
-            "seniority": j.get("seniority_level")})
+            "pid": pid, "ckey": company_key(j["name"], j["domain"]), "cname": j["name"], "domain": j["domain"],
+            "title": j["title"], "start": j["start"] or "", "end": j["end"], "current": j["current"],
+            "seniority": j["seniority"]})
     for s in ((profile.get("education") or {}).get("schools") or []):
         db.query("""
             MATCH (p:Person {pid: $pid}) MERGE (s:School {name: $school})
@@ -59,7 +86,7 @@ def load_person(db: Neo, profile: dict, founded_key: str | None = None) -> str:
 
 def load_company(db: Neo, data: dict) -> str:
     basic = data.get("basic_info") or {}
-    ckey = company_key(basic.get("name"), basic.get("primary_domain"))
+    ckey = company_key(basic.get("name"), _domain(basic.get("primary_domain")))
     head = data.get("headcount") or {}
     fund = data.get("funding") or {}
     hiring = data.get("hiring") or {}
@@ -82,7 +109,9 @@ def load_company(db: Neo, data: dict) -> str:
         SET h.count = pt.employee_count
         MERGE (c)-[:HEADCOUNT]->(h)""", {"ckey": ckey, "points": head.get("timeseries") or []})
     for m in fund.get("milestones") or []:
-        date = m.get("date") or m.get("funding_date")
+        date = (m.get("date") or m.get("funding_date") or m.get("announced_date") or "")[:10]
+        if not date:
+            continue
         db.query("""
             MATCH (c:Company {key: $ckey})
             MERGE (f:FundingRound {company: $ckey, date: date($date)})
@@ -92,7 +121,7 @@ def load_company(db: Neo, data: dict) -> str:
             MERGE (i:Investor {name: inv})
             MERGE (i)-[r:INVESTED_IN]->(f) SET r.lead = inv IN $leads""", {
             "ckey": ckey, "date": date, "amount": m.get("amount_usd"), "round": m.get("round_type"),
-            "investors": m.get("investors") or [], "leads": m.get("lead_investors") or []})
+            "investors": _list(m.get("investors")), "leads": _list(m.get("lead_investors"))})
     for founder in ((data.get("people") or {}).get("founders") or []):
         load_person(db, founder, founded_key=ckey)
     return ckey

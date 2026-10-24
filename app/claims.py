@@ -91,7 +91,8 @@ def signature(c: dict) -> tuple:
     norm = lambda v: " ".join(str(v).lower().split()) if v is not None else None
     t = "investor" if c["type"] == "funding_round" and c["number"] is None and c["investor"] else c["type"]
     if t in ("headcount", "growth", "funding_total", "hiring"):
-        return (t,)
+        # Same type with a different number is a new claim ("47 people" then "over 90 people").
+        return (t, round(c["number"], -1 if t == "headcount" else 0) if c["number"] is not None else None)
     return (t, norm(c["company"]), norm(c["investor"]), norm(c["round_type"]), norm(c["person"]))
 
 
@@ -202,15 +203,27 @@ class ClaimEngine:
         rows = self.db.query("""
             MATCH (:Company {key: $ckey})-[:RAISED]->(f:FundingRound)
             WHERE $round IS NULL OR toLower(replace(f.round_type, '_', ' ')) CONTAINS toLower(replace($round, '_', ' '))
-            RETURN f.round_type AS round, f.amount_usd AS amount, toString(f.date) AS date ORDER BY f.date DESC LIMIT 1""",
-                             {"ckey": ckey, "round": c["round_type"]}, log, "funding: specific round")
-        if not rows or c["number"] is None:
-            return {"status": "unverifiable", "finding": f"No {c['round_type'] or ''} round in the data.", "evidence": []}
-        r = rows[0]
-        ok = abs(c["number"] - r["amount"]) / max(r["amount"], 1) <= 0.2
+            RETURN f.round_type AS round, f.amount_usd AS amount, toString(f.date) AS date ORDER BY f.date DESC""",
+                             {"ckey": ckey, "round": c["round_type"]}, log, "funding: rounds of this type")
+        label = (c["round_type"] or "that").replace("_", " ")
+        if not rows:  # a named round that isn't in the data at all
+            all_rounds = self.db.query("""MATCH (:Company {key: $ckey})-[:RAISED]->(f:FundingRound)
+                RETURN collect(f.round_type + ' ' + toString(f.date)) AS rounds""", {"ckey": ckey})[0]["rounds"]
+            return {"status": "contradicted" if c["round_type"] and all_rounds else "unverifiable",
+                    "finding": f"No {label} round in the data" + (f"; rounds on record: {', '.join(all_rounds)}." if all_rounds else "."),
+                    "evidence": [{"source": "Crustdata funding.milestones", "value": ", ".join(all_rounds) or "none"}]}
+        listed = "; ".join(f"{r['round']} {_usd(r['amount'])} on {r['date']}" for r in rows)
+        if c["number"] is None:
+            return {"status": "verified", "finding": f"{label.title()} round on record: {listed}.",
+                    "evidence": [{"source": "Crustdata funding.milestones", "value": listed}]}
+        # Compare with the latest round of that type and with the sum of all of them ("$12M over two seeds").
+        total = sum(r["amount"] or 0 for r in rows)
+        close = lambda a: a and abs(c["number"] - a) / a <= 0.2
+        ok = close(rows[0]["amount"]) or close(total)
         return {"status": "verified" if ok else "contradicted",
-                "finding": f"Claimed {_usd(c['number'])}; the {r['round']} on {r['date']} was {_usd(r['amount'])}.",
-                "evidence": [{"source": "Crustdata funding.milestones", "value": f"{r['round']} {_usd(r['amount'])} {r['date']}"}]}
+                "finding": f"Claimed {_usd(c['number'])} in {label}; on record: {listed}"
+                           + (f" (total {_usd(total)})." if len(rows) > 1 else "."),
+                "evidence": [{"source": "Crustdata funding.milestones", "value": listed}]}
 
     def _check_investor(self, c, ckey, pid, log):
         rows = self.db.query("""
@@ -243,7 +256,8 @@ class ClaimEngine:
         # Multi-hop: subject and another founder at the same company with overlapping dates.
         rows = self.db.query("""
             MATCH (p:Person {pid: $pid})-[a:WORKED_AT]->(co:Company)<-[b:WORKED_AT]-(o:Person)-[:FOUNDED]->(:Company {key: $ckey})
-            WHERE o <> p AND ($company IS NULL OR toLower(co.name) CONTAINS toLower($company))
+            WHERE o <> p AND co.key <> $ckey  // before this company, not at it
+              AND ($company IS NULL OR toLower(co.name) CONTAINS toLower($company))
               AND ($person IS NULL OR toLower(o.name) CONTAINS toLower($person) OR $person =~ '(?i).*(co-?founder|cto|ceo).*')
               AND a.start <= coalesce(b.end, '9999') AND b.start <= coalesce(a.end, '9999')
             RETURN o.name AS other, co.name AS company, a.start AS a_start, a.end AS a_end, b.start AS b_start, b.end AS b_end""",
