@@ -49,9 +49,7 @@ def api_config():
 def demo_lines(sid: str):
     """Founder lines for a scripted demo: the hand-written script for the sample company, otherwise
     generated from the real dossier (a mix of accurate and inflated claims), so any company can be demoed."""
-    s = sessions.get(sid)
-    if not s:
-        raise HTTPException(404, "Unknown session")
+    s = _session(sid)
     if "demo_lines" not in s:
         if s["company_key"] == "nimbusfreight.example":
             s["demo_lines"] = json.loads((config.ROOT / "data" / "demo_script.json").read_text())["lines"]
@@ -93,29 +91,61 @@ def prepare(req: Prepare):
         WHERE s.id <> $sid AND (s.person = $pid OR s.company = $ckey)
         WITH c.finding AS finding, collect(c.statement)[0] AS claim, max(s.started_at) AS last
         RETURN claim, finding, toString(date(last)) AS call_date ORDER BY last DESC LIMIT 5""", {"sid": sid, "pid": keys["person_pid"], "ckey": keys["company_key"]})
+    sessions[sid] = _new_state(keys, card)
+    return {"session_id": sid, "dossier": card, "open_items": open_items, "graph": graph(sid)["graph"],
+            "live_data": bool(config.CRUSTDATA_API_KEY), "ms": int((time.time() - t0) * 1000)}
+
+
+def _new_state(keys: dict, card: dict) -> dict:
+    """In-memory working state for a call: what claims can be checked against, keyterms, de-dup sets."""
     names = [card["company"]["name"]] + [f["name"] for f in card["founders"]] + \
             [i.split(" (")[0] for r in card["rounds"] for i in r["investors"]]
     founder_ids = [r["pid"] for r in db.query(
         "MATCH (p:Person)-[:FOUNDED]->(:Company {key: $ckey}) RETURN p.pid AS pid", {"ckey": keys["company_key"]})]
-    sessions[sid] = {**keys, "seq": 0, "recent": [], "seen": set(), "suggested": set(),
-                     # Everything this call's claims can be checked against; grows as entities are added.
-                     "scope": {"companies": {keys["company_key"]: card["company"]["name"]},
-                               "people": founder_ids + ([keys["person_pid"]] if keys["person_pid"] else [])},
-                     "added": [],
-                     "keyterms": sorted(set(n for n in names if n)),
-                     "context": f"Diligence call with {card['person']['person']['name'] if card['person'] else 'a founder'} "
-                                f"of {card['company']['name']}."}
-    return {"session_id": sid, "dossier": card, "open_items": open_items, "graph": graph(sid)["graph"],
-            "live_data": bool(config.CRUSTDATA_API_KEY), "ms": int((time.time() - t0) * 1000)}
+    return {**keys, "seq": 0, "recent": [], "seen": set(), "suggested": set(),
+            # Everything this call's claims can be checked against; grows as entities are added.
+            "scope": {"companies": {keys["company_key"]: card["company"]["name"]},
+                      "people": founder_ids + ([keys["person_pid"]] if keys["person_pid"] else [])},
+            "added": [],
+            "keyterms": sorted(set(n for n in names if n)),
+            "context": f"Diligence call with {card['person']['person']['name'] if card['person'] else 'a founder'} "
+                       f"of {card['company']['name']}."}
+
+
+def _session(sid: str) -> dict:
+    """The call's state, restored from Neo4j if the server restarted mid-call (every session is persisted)."""
+    if sid in sessions:
+        return sessions[sid]
+    rows = db.query("""
+        MATCH (s:Session {id: $sid})
+        OPTIONAL MATCH (s)-[:HAS_UTTERANCE]->(u:Utterance)
+        WITH s, max(u.seq) AS seq
+        OPTIONAL MATCH (s)-[:ADDED]->(e)
+        RETURN s.company AS company_key, s.person AS person_pid, coalesce(seq, 0) AS seq,
+               collect(CASE WHEN e:Company THEN {kind: 'company', id: e.key, name: e.name}
+                            WHEN e:Person THEN {kind: 'person', id: e.pid, name: e.name} END) AS added""", {"sid": sid})
+    if not rows:
+        raise HTTPException(404, "Unknown session: click 'Build dossier & start call' to start a new call.")
+    r = rows[0]
+    keys = {"company_key": r["company_key"], "person_pid": r["person_pid"]}
+    state = _new_state(keys, dossier.summary(db, keys["company_key"], keys["person_pid"]))
+    state["seq"] = r["seq"]
+    for a in r["added"]:
+        if a:
+            state["added"].append(a)
+            if a["kind"] == "company":
+                state["scope"]["companies"][a["id"]] = a["name"]
+            else:
+                state["scope"]["people"].append(a["id"])
+    sessions[sid] = state
+    return state
 
 
 @app.post("/api/session/{sid}/utterance")
 def utterance(sid: str, channel: str = Form(...), audio: UploadFile | None = File(None),
               text: str | None = Form(None), speak: bool = Form(False)):
     """One chunk of speech on a channel. Channels are separate streams, so the speaker is known exactly."""
-    s = sessions.get(sid)
-    if not s:
-        raise HTTPException(404, "Unknown session")
+    s = _session(sid)
     if channel not in ("interviewer", "subject"):
         raise HTTPException(400, "channel must be interviewer or subject")
     timing, t = {}, time.time()
@@ -235,9 +265,7 @@ class AddEntity(BaseModel):
 @app.post("/api/session/{sid}/dossier/add")
 def add_to_dossier(sid: str, req: AddEntity):
     """Enrich a company or person mentioned on the call and add it to this call's dossier."""
-    s = sessions.get(sid)
-    if not s:
-        raise HTTPException(404, "Unknown session")
+    s = _session(sid)
     t0 = time.time()
     try:
         ent = dossier.add_entity(db, req.value)
@@ -277,8 +305,7 @@ def _speak(wid: str, text: str) -> dict:
 @app.get("/api/session/{sid}/node/{node_id:path}")
 def node_detail(sid: str, node_id: str):
     """What the graph knows about a clicked node, and which actions make sense for it."""
-    if sid not in sessions:
-        raise HTTPException(404, "Unknown session")
+    _session(sid)
     kind, _, ident = node_id.partition(":")
     if kind == "co":
         rows = db.query("""
@@ -310,9 +337,9 @@ def node_detail(sid: str, node_id: str):
 @app.get("/api/session/{sid}/overlap/{pid}")
 def overlap(sid: str, pid: str):
     """What connects a person to the founder on the call: overlapping employers, GitHub orgs, skills, languages."""
-    s = sessions.get(sid)
-    if not s or not s["person_pid"]:
-        raise HTTPException(404, "Unknown session")
+    s = _session(sid)
+    if not s["person_pid"]:
+        raise HTTPException(404, "No founder on this call")
     log: list = []
     row = db.query("""
         MATCH (a:Person {pid: $a}), (b:Person {pid: $b})
@@ -343,8 +370,7 @@ class PeopleSearch(BaseModel):
 def people_search(sid: str, req: PeopleSearch):
     """Crustdata people search scoped to a company in the graph, e.g. former engineering leads,
     for reference checks or to verify "I worked with X"."""
-    if sid not in sessions:
-        raise HTTPException(404, "Unknown session")
+    _session(sid)
     co = db.query("MATCH (c:Company {key: $key}) RETURN c.name AS name, c.domain AS domain", {"key": req.company_key})
     if not co:
         raise HTTPException(404, "Unknown company")
@@ -378,9 +404,7 @@ def whisper(sid: str, cid: str):
 @app.get("/api/session/{sid}/graph")
 def graph(sid: str):
     """Dossier + claims as nodes and edges for the live graph view."""
-    s = sessions.get(sid)
-    if not s:
-        raise HTTPException(404, "Unknown session")
+    s = _session(sid)
     rows = db.query("""
         MATCH (c:Company {key: $ckey})
         OPTIONAL MATCH (f:Person)-[:FOUNDED]->(c)
@@ -449,9 +473,7 @@ def graph(sid: str):
 @app.post("/api/session/{sid}/end")
 def end(sid: str):
     """The service deliverable: a memo with a source on every claim, saved on the session."""
-    s = sessions.get(sid)
-    if not s:
-        raise HTTPException(404, "Unknown session")
+    s = _session(sid)
     card = dossier.summary(db, s["company_key"], s["person_pid"])
     transcript = db.query("""
         MATCH (:Session {id: $sid})-[:HAS_UTTERANCE]->(u:Utterance)
