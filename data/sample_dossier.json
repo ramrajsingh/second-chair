@@ -18,16 +18,46 @@
             },
             "headcount": {
               "total": 84,
-              "growth_percent": {"mom": -2.3, "qoq": -8.7, "six_months": -16.0, "yoy": -12.5, "two_years": 40.0},
+              "growth_percent": {
+                "mom": -2.3,
+                "qoq": -8.7,
+                "six_months": -16.0,
+                "yoy": -12.5,
+                "two_years": 40.0
+              },
               "timeseries": [
-                {"date": "2024-09-01", "employee_count": 60},
-                {"date": "2025-01-01", "employee_count": 78},
-                {"date": "2025-05-01", "employee_count": 95},
-                {"date": "2025-09-01", "employee_count": 96},
-                {"date": "2025-11-01", "employee_count": 112},
-                {"date": "2026-03-01", "employee_count": 100},
-                {"date": "2026-06-01", "employee_count": 92},
-                {"date": "2026-09-01", "employee_count": 84}
+                {
+                  "date": "2024-09-01",
+                  "employee_count": 60
+                },
+                {
+                  "date": "2025-01-01",
+                  "employee_count": 78
+                },
+                {
+                  "date": "2025-05-01",
+                  "employee_count": 95
+                },
+                {
+                  "date": "2025-09-01",
+                  "employee_count": 96
+                },
+                {
+                  "date": "2025-11-01",
+                  "employee_count": 112
+                },
+                {
+                  "date": "2026-03-01",
+                  "employee_count": 100
+                },
+                {
+                  "date": "2026-06-01",
+                  "employee_count": 92
+                },
+                {
+                  "date": "2026-09-01",
+                  "employee_count": 84
+                }
               ]
             },
             "funding": {
@@ -36,36 +66,154 @@
               "last_fundraise_date": "2024-05-14",
               "last_round_type": "series_a",
               "milestones": [
-                {"date": "2022-02-10", "amount_usd": 2500000, "round_type": "seed", "investors": ["Banyan Seed Fund", "Monsoon Angels"], "lead_investors": ["Banyan Seed Fund"]},
-                {"date": "2024-05-14", "amount_usd": 12000000, "round_type": "series_a", "investors": ["Peak Harbor Capital", "Banyan Seed Fund"], "lead_investors": ["Peak Harbor Capital"]}
+                {
+                  "date": "2022-02-10",
+                  "amount_usd": 2500000,
+                  "round_type": "seed",
+                  "investors": [
+                    "Banyan Seed Fund",
+                    "Monsoon Angels"
+                  ],
+                  "lead_investors": [
+                    "Banyan Seed Fund"
+                  ]
+                },
+                {
+                  "date": "2024-05-14",
+                  "amount_usd": 12000000,
+                  "round_type": "series_a",
+                  "investors": [
+                    "Peak Harbor Capital",
+                    "Banyan Seed Fund"
+                  ],
+                  "lead_investors": [
+                    "Peak Harbor Capital"
+                  ]
+                }
               ],
-              "investors": ["Banyan Seed Fund", "Monsoon Angels", "Peak Harbor Capital"]
+              "investors": [
+                "Banyan Seed Fund",
+                "Monsoon Angels",
+                "Peak Harbor Capital"
+              ]
             },
-            "hiring": {"openings_count": 3, "recent_titles": ["Sales Manager", "Backend Engineer", "Account Executive"]},
+            "hiring": {
+              "openings_count": 3,
+              "recent_titles": [
+                "Sales Manager",
+                "Backend Engineer",
+                "Account Executive"
+              ]
+            },
             "people": {
               "founders": [
                 {
                   "crustdata_person_id": 700001,
-                  "basic_profile": {"name": "Arjun Mehta", "headline": "Founder & CEO at Nimbus Freight", "current_title": "Founder & CEO"},
-                  "professional_network": {"profile_url": "https://www.linkedin.com/in/arjun-mehta-nimbus-demo"},
-                  "experience": {"employment_details": {
-                    "current": [{"name": "Nimbus Freight", "company_website_domain": "nimbusfreight.example", "title": "Founder & CEO", "start_date": "2021-08-01", "end_date": null}],
-                    "past": [
-                      {"name": "Flipkart", "company_website_domain": "flipkart.com", "title": "Senior Engineering Manager", "start_date": "2018-03-01", "end_date": "2021-06-30"},
-                      {"name": "Delhivery", "company_website_domain": "delhivery.com", "title": "Software Engineer", "start_date": "2014-07-01", "end_date": "2018-02-28"}
-                    ]
-                  }}
+                  "basic_profile": {
+                    "name": "Arjun Mehta",
+                    "headline": "Founder & CEO at Nimbus Freight",
+                    "current_title": "Founder & CEO"
+                  },
+                  "professional_network": {
+                    "profile_url": "https://www.linkedin.com/in/arjun-mehta-nimbus-demo"
+                  },
+                  "experience": {
+                    "employment_details": {
+                      "current": [
+                        {
+                          "name": "Nimbus Freight",
+                          "company_website_domain": "nimbusfreight.example",
+                          "title": "Founder & CEO",
+                          "start_date": "2021-08-01",
+                          "end_date": null
+                        }
+                      ],
+                      "past": [
+                        {
+                          "name": "Flipkart",
+                          "company_website_domain": "flipkart.com",
+                          "title": "Senior Engineering Manager",
+                          "start_date": "2018-03-01",
+                          "end_date": "2021-06-30"
+                        },
+                        {
+                          "name": "Delhivery",
+                          "company_website_domain": "delhivery.com",
+                          "title": "Software Engineer",
+                          "start_date": "2014-07-01",
+                          "end_date": "2018-02-28"
+                        }
+                      ]
+                    }
+                  }
                 },
                 {
                   "crustdata_person_id": 700002,
-                  "basic_profile": {"name": "Kavya Iyer", "headline": "Co-founder & CTO at Nimbus Freight", "current_title": "Co-founder & CTO"},
-                  "professional_network": {"profile_url": "https://www.linkedin.com/in/kavya-iyer-nimbus-demo"},
-                  "experience": {"employment_details": {
-                    "current": [{"name": "Nimbus Freight", "company_website_domain": "nimbusfreight.example", "title": "Co-founder & CTO", "start_date": "2021-08-01", "end_date": null}],
-                    "past": [
-                      {"name": "Flipkart", "company_website_domain": "flipkart.com", "title": "Principal Engineer", "start_date": "2017-01-01", "end_date": "2021-05-31"}
+                  "basic_profile": {
+                    "name": "Kavya Iyer",
+                    "headline": "Co-founder & CTO at Nimbus Freight",
+                    "current_title": "Co-founder & CTO"
+                  },
+                  "professional_network": {
+                    "profile_url": "https://www.linkedin.com/in/kavya-iyer-nimbus-demo"
+                  },
+                  "experience": {
+                    "employment_details": {
+                      "current": [
+                        {
+                          "name": "Nimbus Freight",
+                          "company_website_domain": "nimbusfreight.example",
+                          "title": "Co-founder & CTO",
+                          "start_date": "2021-08-01",
+                          "end_date": null
+                        }
+                      ],
+                      "past": [
+                        {
+                          "name": "Flipkart",
+                          "company_website_domain": "flipkart.com",
+                          "title": "Principal Engineer",
+                          "start_date": "2017-01-01",
+                          "end_date": "2021-05-31"
+                        }
+                      ]
+                    }
+                  },
+                  "skills": {
+                    "professional_network_skills": [
+                      "Distributed Systems",
+                      "Go",
+                      "Kubernetes"
                     ]
-                  }}
+                  },
+                  "dev_platform_profiles": [
+                    {
+                      "account_type": "github",
+                      "profile_url": "https://github.com/kavya-iyer-demo",
+                      "followers": 300,
+                      "public_repo_count": 20,
+                      "total_stars": 900,
+                      "all_languages": [
+                        "Go",
+                        "Rust"
+                      ],
+                      "org_memberships": [
+                        {
+                          "login": "nimbus-freight"
+                        }
+                      ],
+                      "repos": [
+                        {
+                          "full_name": "kavya-iyer-demo/raft-lite",
+                          "description": "Small Raft implementation",
+                          "primary_language": "Go",
+                          "stars": 780,
+                          "forks_count": 60,
+                          "is_fork": false
+                        }
+                      ]
+                    }
+                  ]
                 }
               ]
             }
@@ -84,17 +232,130 @@
           "confidence_score": 1.0,
           "person_data": {
             "crustdata_person_id": 700001,
-            "basic_profile": {"name": "Arjun Mehta", "headline": "Founder & CEO at Nimbus Freight", "current_title": "Founder & CEO"},
-            "professional_network": {"profile_url": "https://www.linkedin.com/in/arjun-mehta-nimbus-demo"},
-            "experience": {"employment_details": {
-              "current": [{"name": "Nimbus Freight", "company_website_domain": "nimbusfreight.example", "title": "Founder & CEO", "start_date": "2021-08-01", "end_date": null, "seniority_level": "Owner"}],
-              "past": [
-                {"name": "Flipkart", "company_website_domain": "flipkart.com", "title": "Senior Engineering Manager", "start_date": "2018-03-01", "end_date": "2021-06-30", "seniority_level": "Manager"},
-                {"name": "Delhivery", "company_website_domain": "delhivery.com", "title": "Software Engineer", "start_date": "2014-07-01", "end_date": "2018-02-28", "seniority_level": "Entry"}
+            "basic_profile": {
+              "name": "Arjun Mehta",
+              "headline": "Founder & CEO at Nimbus Freight",
+              "current_title": "Founder & CEO"
+            },
+            "professional_network": {
+              "profile_url": "https://www.linkedin.com/in/arjun-mehta-nimbus-demo",
+              "followers": 4100,
+              "connections": 500
+            },
+            "experience": {
+              "employment_details": {
+                "current": [
+                  {
+                    "name": "Nimbus Freight",
+                    "company_website_domain": "nimbusfreight.example",
+                    "title": "Founder & CEO",
+                    "start_date": "2021-08-01",
+                    "end_date": null,
+                    "seniority_level": "Owner"
+                  }
+                ],
+                "past": [
+                  {
+                    "name": "Flipkart",
+                    "company_website_domain": "flipkart.com",
+                    "title": "Senior Engineering Manager",
+                    "start_date": "2018-03-01",
+                    "end_date": "2021-06-30",
+                    "seniority_level": "Manager"
+                  },
+                  {
+                    "name": "Delhivery",
+                    "company_website_domain": "delhivery.com",
+                    "title": "Software Engineer",
+                    "start_date": "2014-07-01",
+                    "end_date": "2018-02-28",
+                    "seniority_level": "Entry"
+                  }
+                ]
+              }
+            },
+            "education": {
+              "schools": [
+                {
+                  "school": "IIT Madras",
+                  "degree": "B.Tech",
+                  "field_of_study": "Computer Science",
+                  "start_year": 2010,
+                  "end_year": 2014
+                }
               ]
-            }},
-            "education": {"schools": [{"school": "IIT Madras", "degree": "B.Tech", "field_of_study": "Computer Science", "start_year": 2010, "end_year": 2014}]},
-            "skills": {"professional_network_skills": ["Logistics", "Distributed Systems", "Team Leadership"]}
+            },
+            "skills": {
+              "professional_network_skills": [
+                "Logistics",
+                "Distributed Systems",
+                "Team Leadership"
+              ]
+            },
+            "assessment": {
+              "authenticity": {
+                "verdict": "likely_genuine",
+                "tier": 2
+              }
+            },
+            "dev_platform_profiles": [
+              {
+                "account_type": "github",
+                "profile_url": "https://github.com/arjun-mehta-demo",
+                "followers": 120,
+                "following": 30,
+                "public_repo_count": 14,
+                "total_stars": 340,
+                "max_stars": 210,
+                "all_languages": [
+                  "Go",
+                  "Python",
+                  "TypeScript"
+                ],
+                "all_topics": [
+                  "logistics",
+                  "routing",
+                  "optimization"
+                ],
+                "org_memberships": [
+                  {
+                    "login": "nimbus-freight"
+                  },
+                  {
+                    "login": "gophers-blr"
+                  }
+                ],
+                "repos": [
+                  {
+                    "full_name": "arjun-mehta-demo/route-optimizer",
+                    "description": "Vehicle routing heuristics for freight",
+                    "primary_language": "Go",
+                    "stars": 210,
+                    "forks_count": 18,
+                    "is_fork": false,
+                    "topics": [
+                      "routing"
+                    ]
+                  },
+                  {
+                    "full_name": "arjun-mehta-demo/freight-eta",
+                    "description": "ETA prediction for trucking lanes",
+                    "primary_language": "Python",
+                    "stars": 95,
+                    "forks_count": 7,
+                    "is_fork": false
+                  },
+                  {
+                    "full_name": "arjun-mehta-demo/dotfiles",
+                    "description": "",
+                    "primary_language": "Shell",
+                    "stars": 5,
+                    "forks_count": 0,
+                    "is_fork": false
+                  }
+                ]
+              }
+            ]
           }
         }
       ]

@@ -18,7 +18,8 @@ from openai import OpenAI
 from app import config
 from app.neo import Neo
 
-CLAIM_TYPES = ["headcount", "growth", "role", "funding_total", "funding_round", "investor", "hiring", "shared_history"]
+CLAIM_TYPES = ["headcount", "growth", "role", "funding_total", "funding_round", "investor", "hiring", "shared_history",
+               "open_source", "skill", "github_org"]
 
 EXTRACT_PROMPT = """You listen to a founder or candidate on a diligence call and extract factual claims that can be
 checked against company and people data. Only extract concrete, checkable claims of these types:
@@ -30,6 +31,10 @@ checked against company and people data. Only extract concrete, checkable claims
 - investor: a named backer ("Peak Harbor led our A") -> investor
 - hiring: hiring activity ("we're hiring 30 engineers") -> number of open roles
 - shared_history: worked with someone before ("my co-founder and I worked together at Flipkart") -> person, company
+- open_source: GitHub/open-source traction ("my library has 5k stars", "I have 10k stars on GitHub") -> repo (null for
+  the whole account), number = stars
+- skill: hands-on expertise in a technology ("I've written Rust for five years", "I'm deep in Kubernetes") -> skill
+- github_org: membership or maintainer role in an open-source org ("I'm a maintainer in the Kubernetes org") -> org
 Company-level claims (headcount, growth, funding, investor, hiring) can be about another company the speaker
 names, such as a competitor ("Shiprocket only has 50 people"); put that company in `company`, otherwise leave
 `company` null for claims about the speaker's own company.
@@ -58,11 +63,14 @@ CLAIM_SCHEMA = {
             "round_type": {"type": ["string", "null"]},
             "investor": {"type": ["string", "null"]},
             "person": {"type": ["string", "null"]},
+            "repo": {"type": ["string", "null"]},
+            "skill": {"type": ["string", "null"]},
+            "org": {"type": ["string", "null"]},
             "hedge": {"type": ["string", "null"],
                       "description": "The qualifier softening the claim (about, roughly, almost, north of, tracking toward), or null"},
         },
         "required": ["type", "statement", "number", "period_months", "company", "title", "start_year",
-                     "end_year", "round_type", "investor", "person", "hedge"],
+                     "end_year", "round_type", "investor", "person", "repo", "skill", "org", "hedge"],
         "additionalProperties": False,
     }}},
     "required": ["claims", "mentions"],
@@ -88,7 +96,7 @@ Hinglish (Hindi in Latin script mixed with English). Return JSON: {"lines": ["..
 MEMO_PROMPT = """Write a concise diligence memo in Markdown from the call record below. Sections: Summary (2-3 sentences),
 Claims checked (a table: claim, verdict, evidence with source; mark hedged claims with the hedge words), Evasions and
 shifting answers (questions not answered, and numbers that changed within or across calls, quoting both versions),
-Red flags, Questions for the next call. Every factual
+Red flags (include any profile whose Crustdata authenticity verdict is not genuine), Questions for the next call. Every factual
 statement must cite its source as [Crustdata: <field>] or [Call: <speaker quote>]. No speculation beyond the data."""
 
 NUMERIC_TYPES = ["headcount", "growth", "funding_total", "funding_round", "hiring"]
@@ -132,6 +140,8 @@ def signature(c: dict) -> tuple:
         # Same type with a different number, or about another company, is a new claim.
         return (t, norm(c["company"]),
                 round(c["number"], -1 if t == "headcount" else 0) if c["number"] is not None else None)
+    if t in ("open_source", "skill", "github_org"):
+        return (t, norm(c.get("repo") or c.get("skill") or c.get("org")), c["number"])
     return (t, norm(c["company"]), norm(c["investor"]), norm(c["round_type"]), norm(c["person"]))
 
 
@@ -331,8 +341,84 @@ class ClaimEngine:
                     "finding": f"Overlapped with {r['other']} at {r['company']} ({max(r['a_start'], r['b_start'])[:7]} to "
                                f"{min(r['a_end'] or '9999', r['b_end'] or '9999')[:7]}).",
                     "evidence": [{"source": "Crustdata experience (both founders)", "value": f"{r['company']} overlap"}]}
+        if not c["company"]:  # no company named: shared GitHub orgs are evidence of working together
+            orgs = self.db.query("""
+                MATCH (:Person {pid: $pid})-[:HAS_GITHUB]->(:GitHubAccount)-[:MEMBER_OF]->(o:GitHubOrg)
+                      <-[:MEMBER_OF]-(:GitHubAccount)<-[:HAS_GITHUB]-(other:Person)
+                WHERE other.pid IN $people OR (other)-[:FOUNDED]->(:Company {key: $ckey})
+                RETURN other.name AS other, collect(o.name) AS orgs LIMIT 1""",
+                                 {"pid": pid, "ckey": ckey, "people": c.get("_people", [])}, log,
+                                 "shared history: common GitHub orgs")
+            if orgs:
+                return {"status": "verified",
+                        "finding": f"No overlapping employer, but both are in GitHub org {', '.join(orgs[0]['orgs'])} with {orgs[0]['other']}.",
+                        "evidence": [{"source": "Crustdata dev_platform_profiles.org_memberships", "value": ", ".join(orgs[0]["orgs"])}]}
         return {"status": "contradicted", "finding": "No overlapping tenure found between the founders.",
                 "evidence": [{"source": "Crustdata experience (both founders)", "value": "no overlap"}]}
+
+    def _check_open_source(self, c, ckey, pid, log):
+        rows = self.db.query("""
+            MATCH (:Person {pid: $pid})-[:HAS_GITHUB]->(g:GitHubAccount)
+            OPTIONAL MATCH (g)-[:OWNS]->(r:Repo)
+            RETURN g.url AS url, g.total_stars AS total, collect(r {.full_name, .stars}) AS repos""",
+                             {"pid": pid}, log, "open source: GitHub repos and stars")
+        if not rows:
+            return {"status": "unverifiable", "finding": "No GitHub account linked to this profile.", "evidence": []}
+        r = rows[0]
+        repo = None
+        if c.get("repo"):
+            # "my route optimizer library" -> route-optimizer: match on the claim's key words.
+            words = {w for w in re.findall(r"[a-z0-9]+", c["repo"].lower())
+                     if len(w) > 2 and w not in {"library", "project", "repo", "tool", "the", "our", "my", "lib", "sdk", "framework"}}
+            scored = [(len(words & set(re.findall(r"[a-z0-9]+", x["full_name"].split("/")[-1].lower()))), x) for x in r["repos"]]
+            scored = [sx for sx in scored if sx[0]]
+            if not scored:
+                return {"status": "unverifiable", "evidence": [{"source": "Crustdata dev_platform_profiles", "value": r["url"]}],
+                        "finding": f"No owned repo matching '{c['repo']}' on {r['url']} (only owned, non-fork repos are listed)."}
+            repo = max(scored, key=lambda sx: (sx[0], sx[1]["stars"] or 0))[1]
+        actual, what = (repo["stars"], repo["full_name"]) if repo else (r["total"], "all repos")
+        if c["number"] is None or actual is None:
+            return {"status": "verified", "finding": f"{what} on {r['url']}: {actual} stars.",
+                    "evidence": [{"source": "Crustdata dev_platform_profiles.repos", "value": f"{what}: {actual}★"}]}
+        ok = actual >= c["number"] * 0.75
+        return {"status": "verified" if ok else "contradicted",
+                "finding": f"Claimed {c['number']:g} stars; {what} has {actual}.",
+                "evidence": [{"source": "Crustdata dev_platform_profiles.repos", "value": f"{what}: {actual}★"}]}
+
+    def _check_skill(self, c, ckey, pid, log):
+        skill = (c.get("skill") or "").strip()
+        rows = self.db.query("""
+            MATCH (p:Person {pid: $pid})
+            OPTIONAL MATCH (p)-[:HAS_SKILL]->(k:Skill) WHERE toLower(k.name) CONTAINS toLower($skill)
+            OPTIONAL MATCH (p)-[:HAS_GITHUB]->(:GitHubAccount)-[:OWNS]->(r:Repo)-[:WRITTEN_IN]->(l:Language)
+              WHERE toLower(l.name) = toLower($skill)
+            RETURN collect(DISTINCT k.name) AS skills, collect(DISTINCT r.full_name)[..3] AS repos, count(DISTINCT r) AS n""",
+                             {"pid": pid, "skill": skill}, log, "skill: listed skills and repo languages")
+        r = rows[0] if rows else {"skills": [], "repos": [], "n": 0}
+        if r["skills"] or r["n"]:
+            ev = ([{"source": "Crustdata skills", "value": ", ".join(r["skills"])}] if r["skills"] else []) + \
+                 ([{"source": "Crustdata dev_platform_profiles.repos", "value": f"{r['n']} {skill} repos: {', '.join(r['repos'])}"}] if r["n"] else [])
+            return {"status": "verified", "evidence": ev,
+                    "finding": f"Public evidence of {skill}: " + "; ".join(e["value"] for e in ev) + "."}
+        # Absence of a listed skill is not proof it's false, so this never contradicts.
+        return {"status": "unverifiable", "evidence": [],
+                "finding": f"No public evidence of {skill} in listed skills or owned repo languages."}
+
+    def _check_github_org(self, c, ckey, pid, log):
+        rows = self.db.query("""
+            MATCH (:Person {pid: $pid})-[:HAS_GITHUB]->(g:GitHubAccount)
+            OPTIONAL MATCH (g)-[:MEMBER_OF]->(o:GitHubOrg)
+            RETURN g.url AS url, collect(o.name) AS orgs""", {"pid": pid}, log, "GitHub org memberships")
+        if not rows:
+            return {"status": "unverifiable", "finding": "No GitHub account linked to this profile.", "evidence": []}
+        orgs, want = rows[0]["orgs"], (c.get("org") or "").lower()
+        hit = [o for o in orgs if want and (want in o.lower() or o.lower() in want)]
+        if hit:
+            return {"status": "verified", "finding": f"Public member of GitHub org {hit[0]}.",
+                    "evidence": [{"source": "Crustdata dev_platform_profiles.org_memberships", "value": hit[0]}]}
+        return {"status": "unverifiable", "evidence": [{"source": "Crustdata dev_platform_profiles.org_memberships",
+                                                        "value": ", ".join(orgs) or "none public"}],
+                "finding": f"{c.get('org')} isn't among public org memberships ({', '.join(orgs) or 'none'}); memberships can be private."}
 
     # --- Output ----------------------------------------------------------
     def whisper(self, claim: dict, verdict: dict) -> str:

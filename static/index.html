@@ -108,7 +108,7 @@
     <section class="panel">
       <h2>Dossier graph (Neo4j)</h2>
       <div class="gwrap"><div id="graph"></div><div id="nodePanel"></div></div>
-      <div class="legend"><span style="--c:#2563eb">Company</span><span style="--c:#7c3aed">Person</span><span style="--c:#64748b">Past company</span><span style="--c:#0891b2">Round</span><span style="--c:#d97706">Investor</span><span style="--c:#db2777">Added on call</span><span style="--c:#16a34a">Verified</span><span style="--c:#dc2626">Contradicted</span></div>
+      <div class="legend"><span style="--c:#2563eb">Company</span><span style="--c:#7c3aed">Person</span><span style="--c:#64748b">Past company</span><span style="--c:#0891b2">Round</span><span style="--c:#d97706">Investor</span><span style="--c:#111827">GitHub</span><span style="--c:#0d9488">GitHub org</span><span style="--c:#db2777">Added on call</span><span style="--c:#16a34a">Verified</span><span style="--c:#dc2626">Contradicted</span></div>
     </section>
     <section class="panel">
       <h2>Dossier (Crustdata)</h2>
@@ -124,6 +124,7 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 let sid = null, script = [], scriptIdx = 0, queue = [], player = new Audio(), claimCount = 0;
 const COLORS = { company:"#2563eb", person:"#7c3aed", past_company:"#64748b", round:"#0891b2", investor:"#d97706",
+                 github:"#111827", repo:"#475569", github_org:"#0d9488",
                  added_company:"#db2777", added_person:"#db2777", claim_verified:"#16a34a", claim_contradicted:"#dc2626", claim_unverifiable:"#ca8a04" };
 const nodes = new vis.DataSet(), edges = new vis.DataSet();
 const network = new vis.Network($("graph"), { nodes, edges }, {
@@ -157,11 +158,19 @@ async function openNode(id) {
     $("npTitle").onkeydown = (e) => e.key === "Enter" && $("npSearch").click();
   } else if (n.kind === "person") {
     P.innerHTML = `<h3><span>${esc(n.name)}</span>${close}</h3><div class="src">${esc(n.headline || "")}</div>
-      ${n.url ? `<div class="row"><button id="npProfile">Enrich full profile</button></div>` : ""}
+      <div class="row">${n.url ? `<button id="npProfile">Enrich full profile</button>` : ""}<button id="npOverlap">Overlap with founder</button></div>
+      <div id="npOverlapBox"></div>
       <div style="margin-top:8px"><b>Find colleagues</b> <span class="src">people who also worked at…</span></div>
       ${n.roles.filter((r) => r.key).map((r, i) => `<div class="res"><span>${esc(r.company)}<small>${esc(r.title)} · ${esc((r.start || "").slice(0, 7))}–${esc((r.end || "now").slice(0, 7))}</small></span><button data-i="${i}">Colleagues</button></div>`).join("")}
       <div id="npResults"></div>`;
     if ($("npProfile")) $("npProfile").onclick = () => addEntity(n.url);
+    $("npOverlap").onclick = async () => {
+      const o = await api(`/api/session/${sid}/overlap/${encodeURIComponent(id.slice(2))}`).catch((e) => ({ error: e.message }));
+      const list = (label, xs) => `<div><b>${label}:</b> ${xs && xs.length ? esc(xs.join(", ")) : `<span class="src">none</span>`}</div>`;
+      $("npOverlapBox").innerHTML = o.error ? `<div class="src">${esc(o.error)}</div>` : `<div class="card" style="margin-top:6px">
+        <div class="src">${esc(o.person)} ↔ ${esc(o.founder)}</div>${list("Same employer, overlapping", o.companies)}${list("GitHub orgs", o.orgs)}${list("Skills", o.skills)}${list("Repo languages", o.languages)}
+        <details><summary class="src" style="cursor:pointer">Cypher</summary>${o.cypher.map((q) => `<code>${esc(q.cypher)}</code>`).join("")}</details></div>`;
+    };
     const roles = n.roles.filter((r) => r.key);
     P.querySelectorAll("button[data-i]").forEach((b) => (b.onclick = () => searchPeople(roles[+b.dataset.i].key, "", "any")));
   } else if (n.kind === "investor") {
@@ -207,10 +216,22 @@ function renderDossier(d, openItems) {
       <tr><td class="k">Total raised</td><td>${c.total_funding_usd ? "$" + (c.total_funding_usd / 1e6).toFixed(1) + "M" : "?"}</td></tr>
       ${(d.rounds || []).map((r) => `<tr><td class="k">${esc(r.date)} · ${esc((r.round || "").replace("_", " "))}</td><td>$${((r.amount_usd || 0) / 1e6).toFixed(1)}M · ${esc(r.investors.join(", "))}</td></tr>`).join("")}
       <tr><td class="k">Open roles</td><td>${c.openings ?? "?"}</td></tr>
-      <tr><td class="k">Founders</td><td>${(d.founders || []).map((f) => esc(f.name) + " (" + esc(f.title) + ")").join("<br>")}</td></tr>
-      ${p ? `<tr><td class="k">${esc(p.person.name)}</td><td>${p.roles.map((r) => `${esc(r.title)} · ${esc(r.company)} <span style="color:var(--muted)">${esc((r.start || "").slice(0, 7))}–${esc((r.end || "now").slice(0, 7))}</span>`).join("<br>")}</td></tr>` : ""}
+      <tr><td class="k">Founders</td><td>${(d.founders || []).map((f) => esc(f.name) + " (" + esc(f.title) + ")" + authBadge(f.authenticity)).join("<br>")}</td></tr>
+      ${p ? `<tr><td class="k">${esc(p.person.name)}${authBadge(p.person.authenticity_verdict)}${p.person.followers != null ? `<br><span class="src">${p.person.followers} followers</span>` : ""}</td><td>${p.roles.map((r) => `${esc(r.title)} · ${esc(r.company)} <span style="color:var(--muted)">${esc((r.start || "").slice(0, 7))}–${esc((r.end || "now").slice(0, 7))}</span>`).join("<br>")}</td></tr>` : ""}
+      ${p && p.github ? `<tr><td class="k">GitHub</td><td><a href="${esc(p.github.url)}" target="_blank">${esc(p.github.login)}</a> · ${p.github.total_stars ?? 0}★ · ${p.github.public_repos ?? "?"} repos · ${p.github.followers ?? 0} followers
+          ${p.github.top_repos.map((r) => `<br><span class="src">${esc(r.full_name)} · ${r.stars ?? 0}★ · ${esc(r.language || "")}</span>`).join("")}
+          ${(p.github.languages || []).length ? `<br><span class="src">Languages: ${esc(p.github.languages.slice(0, 8).join(", "))}</span>` : ""}
+          ${p.github.orgs.length ? `<br><span class="src">Orgs: ${esc(p.github.orgs.join(", "))}</span>` : ""}</td></tr>` : ""}
+      ${p && p.skills && p.skills.length ? `<tr><td class="k">Skills</td><td>${p.skills.map((s) => `<span class="tag">${esc(s)}</span>`).join(" ")}</td></tr>` : ""}
     </table>
     ${openItems && openItems.length ? `<div style="margin-top:8px"><b>Open from earlier calls</b>${openItems.map((o) => `<div class="card contradicted"><span class="st">${esc(o.call_date)}</span> ${esc(o.claim)}<div class="src">${esc(o.finding)}</div></div>`).join("")}</div>` : ""}`;
+}
+
+// Crustdata's profile authenticity verdict: shown only when it isn't plainly genuine or is a warning.
+function authBadge(v) {
+  if (!v) return "";
+  const bad = /fabricat|suspicious|likely_fake|unlikely/.test(v), ok = /genuine/.test(v) && !bad;
+  return ` <span class="tag" style="${bad ? "background:var(--badbg);color:var(--bad)" : ok ? "background:var(--okbg);color:var(--ok)" : ""}" title="Crustdata authenticity verdict">${esc(v.replaceAll("_", " "))}</span>`;
 }
 
 function addUtterance(u) {

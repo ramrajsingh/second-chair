@@ -24,6 +24,9 @@ before the call: Crustdata person + company enrichment ─► Neo4j        after
 (:Session)-[:ABOUT]->(:Person | :Company)
 (:Session)-[:ADDED]->(:Person | :Company)          // added mid-call
 (:Utterance)-[:RAISED]->(:Flag {kind: 'evasion'})-[:ABOUT_QUESTION]->(:Utterance)
+(:Person {followers, connections, authenticity_verdict, authenticity_tier})-[:HAS_SKILL]->(:Skill)
+(:Person)-[:HAS_GITHUB]->(:GitHubAccount {total_stars, languages})-[:OWNS]->(:Repo {stars})-[:WRITTEN_IN]->(:Language)
+(:GitHubAccount)-[:MEMBER_OF]->(:GitHubOrg)
 (:Claim {claimed, hedge})-[:SHIFTED_FROM]->(:Claim)
 (:Session)-[:HAS_UTTERANCE]->(:Utterance {speaker, text, original, language})-[:MADE_CLAIM]->(:Claim {status, finding, evidence, cypher})
 ```
@@ -40,7 +43,10 @@ The dossier is fetched **before** the call (Crustdata's default limit is 15 requ
 | Funding total / round | `total_funding_usd`, `FundingRound` amounts |
 | Investor ("Peak Harbor led our A") | `Investor`-[:INVESTED_IN]->`FundingRound` |
 | Hiring ("hiring 30 engineers") | Open roles and 6-month headcount change |
-| Shared history ("my co-founder and I worked together") | Multi-hop: both founders `WORKED_AT` the same company with overlapping dates |
+| Shared history ("my co-founder and I worked together") | Multi-hop: both founders `WORKED_AT` the same company with overlapping dates; without a company named, a shared GitHub org also counts |
+| Open source ("my library has 2k stars") | Owned repo matched by key words → `Repo.stars`, or account total stars |
+| Skill ("I've written Go for years") | `HAS_SKILL` or owned repos `WRITTEN_IN` that language; never "contradicted", since missing evidence isn't proof |
+| GitHub org ("I'm a Kubernetes maintainer") | Public `MEMBER_OF` memberships (private ones can't be seen, so a miss is "unverifiable") |
 
 ## Setup
 
@@ -66,6 +72,10 @@ Feed the call in any combination:
 - **Shifting answers:** a number that changes for the same fact, earlier in the call or on a previous call with the same founder or company, is linked `(:Claim)-[:SHIFTED_FROM]->(:Claim)` and whispered: *"earlier 200, now 150, data shows 84"*.
 
 The memo gets an **Evasions and shifting answers** section quoting both versions.
+
+**People data beyond jobs:** founders are enriched at prep with skills, GitHub (repos, stars, languages, orgs), follower counts and, where your Crustdata key allows it, the profile **authenticity** verdict, which is shown as a badge and listed as a red flag when not genuine. Click any person and choose **Overlap with founder** for shared employers with overlapping tenure, GitHub orgs, skills and repo languages.
+
+**Explore the graph:** click a company to enrich it or **find people** (current/former, by title) via Crustdata people search; click a person to enrich their profile or find colleagues at each past employer; click an investor to enrich it. Results add to the graph with one click.
 
 **Grow the dossier mid-call:** when the founder names a company or person that isn't in the dossier (a competitor, past employer, advisor), a **➕ chip** suggests adding it, or you can type a domain, company name or profile URL into **Add**. It's enriched from Crustdata, linked to the call (`(:Session)-[:ADDED]->`), and becomes checkable: "Apollo only has 100 people" is checked against Apollo's own headcount, and claims made before you added it are re-checked automatically.
 

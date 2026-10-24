@@ -307,6 +307,31 @@ def node_detail(sid: str, node_id: str):
     return {"kind": "other"}
 
 
+@app.get("/api/session/{sid}/overlap/{pid}")
+def overlap(sid: str, pid: str):
+    """What connects a person to the founder on the call: overlapping employers, GitHub orgs, skills, languages."""
+    s = sessions.get(sid)
+    if not s or not s["person_pid"]:
+        raise HTTPException(404, "Unknown session")
+    log: list = []
+    row = db.query("""
+        MATCH (a:Person {pid: $a}), (b:Person {pid: $b})
+        OPTIONAL MATCH (a)-[wa:WORKED_AT]->(co:Company)<-[wb:WORKED_AT]-(b)
+          WHERE wa.start <= coalesce(wb.end, '9999') AND wb.start <= coalesce(wa.end, '9999')
+        WITH a, b, collect(DISTINCT co.name + ' (' + left(CASE WHEN wa.start > wb.start THEN wa.start ELSE wb.start END, 7) + ')') AS companies
+        OPTIONAL MATCH (a)-[:HAS_GITHUB]->(:GitHubAccount)-[:MEMBER_OF]->(o:GitHubOrg)<-[:MEMBER_OF]-(:GitHubAccount)<-[:HAS_GITHUB]-(b)
+        WITH a, b, companies, collect(DISTINCT o.name) AS orgs
+        OPTIONAL MATCH (a)-[:HAS_SKILL]->(k:Skill)<-[:HAS_SKILL]-(b)
+        WITH a, b, companies, orgs, collect(DISTINCT k.name) AS skills
+        OPTIONAL MATCH (a)-[:HAS_GITHUB]->(:GitHubAccount)-[:OWNS]->(:Repo)-[:WRITTEN_IN]->(l:Language)
+                       <-[:WRITTEN_IN]-(:Repo)<-[:OWNS]-(:GitHubAccount)<-[:HAS_GITHUB]-(b)
+        RETURN a.name AS founder, b.name AS person, companies, orgs, skills, collect(DISTINCT l.name) AS languages""",
+                   {"a": s["person_pid"], "b": pid}, log, "overlap: employers, GitHub orgs, skills, languages")
+    if not row:
+        raise HTTPException(404, "Unknown person")
+    return {**row[0], "cypher": log}
+
+
 class PeopleSearch(BaseModel):
     company_key: str
     when: str = "any"           # current, past or any
@@ -389,6 +414,21 @@ def graph(sid: str):
             if i:
                 edges.append({"from": node(f"i:{i['name']}", i["name"], "investor"), "to": rn,
                               "label": "LED" if lead else "INVESTED"})
+    # Founders' GitHub: account, top repos by stars, and orgs (shared orgs show up as shared nodes).
+    for g in db.query("""
+        MATCH (f:Person)-[:FOUNDED]->(:Company {key: $ckey})
+        MATCH (f)-[:HAS_GITHUB]->(gh:GitHubAccount)
+        OPTIONAL MATCH (gh)-[:OWNS]->(r:Repo) WITH f, gh, r ORDER BY r.stars DESC
+        WITH f, gh, collect(r)[..3] AS repos
+        OPTIONAL MATCH (gh)-[:MEMBER_OF]->(o:GitHubOrg)
+        RETURN f.pid AS pid, gh.login AS login, gh.total_stars AS stars, [x IN repos | x {.full_name, .stars}] AS repos,
+               collect(o.name) AS orgs""", {"ckey": s["company_key"]}):
+        gn = node(f"gh:{g['login']}", f"GitHub {g['login']}\n{g['stars'] or 0}★", "github")
+        edges.append({"from": f"p:{g['pid']}", "to": gn, "label": "HAS_GITHUB"})
+        for r in g["repos"]:
+            edges.append({"from": gn, "to": node(f"repo:{r['full_name']}", f"{r['full_name'].split('/')[-1]}\n{r['stars'] or 0}★", "repo"), "label": "OWNS"})
+        for o in g["orgs"][:5]:
+            edges.append({"from": gn, "to": node(f"org:{o.lower()}", o, "github_org"), "label": "MEMBER_OF"})
     for a in s["added"]:
         if a["kind"] == "company":
             node(f"co:{a['id']}", f"{a['name']}\n{a.get('headcount') or '?'} people", "added_company")

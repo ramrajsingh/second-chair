@@ -17,6 +17,9 @@ SAMPLE = config.ROOT / "data" / "sample_dossier.json"
 
 COMPANY_FIELDS = ["basic_info", "headcount", "funding", "hiring", "people"]
 PERSON_FIELDS = ["basic_profile", "experience", "education", "skills"]
+# Extra groups: GitHub (dev_platform_profiles), follower counts (professional_network), handles, and
+# Crustdata's profile authenticity verdict. Some need per-key permission; denied groups are dropped.
+PERSON_EXTRA_FIELDS = ["dev_platform_profiles", "professional_network", "social_handles", "assessment"]
 
 
 class CrustdataError(RuntimeError):
@@ -97,7 +100,21 @@ def search_people(domain: str | None = None, company: str | None = None, when: s
 def enrich_people(profile_urls: list[str]) -> list[dict]:
     """Employment history with titles and dates, education and skills, for up to 25 profiles in one call.
     Returns person_data in input order; profiles Crustdata can't match are skipped."""
-    resp = _cached("person", {"professional_network_profile_urls": profile_urls[:25], "fields": PERSON_FIELDS})
+    urls = profile_urls[:25]
+    try:
+        resp = _cached("person", {"professional_network_profile_urls": urls, "fields": PERSON_FIELDS + PERSON_EXTRA_FIELDS})
+    except CrustdataError as e:
+        if "403" not in str(e):
+            raise
+        resp = None
+        for extra in PERSON_EXTRA_FIELDS:  # find which extra groups this key may use, one at a time
+            try:
+                _cached("person", {"professional_network_profile_urls": urls[:1], "fields": PERSON_FIELDS + [extra]})
+                PERSON_FIELDS.append(extra)
+            except CrustdataError:
+                pass
+        PERSON_EXTRA_FIELDS.clear()
+        resp = _cached("person", {"professional_network_profile_urls": urls, "fields": PERSON_FIELDS})
     by_url = {e.get("matched_on"): e for e in resp or []}
     people = []
     for url in profile_urls[:25]:
