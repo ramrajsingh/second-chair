@@ -35,7 +35,8 @@ sessions: dict[str, dict] = {}
 
 @app.get("/")
 def index():
-    return FileResponse(config.ROOT / "static" / "index.html")
+    # No caching: the page changes often and a stale copy silently runs old code.
+    return FileResponse(config.ROOT / "static" / "index.html", headers={"Cache-Control": "no-store, max-age=0"})
 
 
 @app.get("/api/config")
@@ -52,10 +53,18 @@ def demo_lines(sid: str):
     s = _session(sid)
     if "demo_lines" not in s:
         if s["company_key"] == "nimbusfreight.example":
-            s["demo_lines"] = json.loads((config.ROOT / "data" / "demo_script.json").read_text())["lines"]
+            path = config.ROOT / "data" / "demo_script.json"
         else:
-            s["demo_lines"] = engine.demo_lines(dossier.summary(db, s["company_key"], s["person_pid"]))
-    return {"lines": s["demo_lines"]}
+            # Generated once per company, then saved so they can be edited: data/scripts/<domain>.json
+            path = config.ROOT / "data" / "scripts" / f"{re.sub(r'[^a-z0-9.-]', '_', s['company_key'])}.json"
+            if not path.exists():
+                path.parent.mkdir(parents=True, exist_ok=True)
+                lines = engine.demo_lines(dossier.summary(db, s["company_key"], s["person_pid"]))
+                path.write_text(json.dumps({"_note": "Founder lines for '▶ Next scripted founder line'. Edit, reorder or add; "
+                                                     "the next call uses this file.", "lines": lines}, indent=2, ensure_ascii=False))
+        s["demo_lines"] = json.loads(path.read_text())["lines"]
+        s["demo_file"] = str(path.relative_to(config.ROOT))
+    return {"lines": s["demo_lines"], "file": s.get("demo_file")}
 
 
 class Prepare(BaseModel):

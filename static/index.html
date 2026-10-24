@@ -93,9 +93,9 @@
     <h2>Live call · two channels</h2>
     <div id="transcript" class="scroll"></div>
     <div class="controls">
-      <div class="row"><span class="lbl">Interviewer</span><button id="micA" disabled>🎙 Mic</button><input id="textA" type="text" placeholder="type interviewer line" disabled></div>
-      <div class="row"><span class="lbl">Founder</span><button id="micB" disabled>🖥 Tab audio</button><input id="textB" type="text" placeholder="type founder line" disabled></div>
-      <div class="row"><span class="lbl">Demo</span><button id="script" disabled>▶ Next scripted founder line</button><span id="scriptPos" class="pill"></span></div>
+      <div class="row"><span class="lbl">Interviewer</span><button id="micA">🎙 Mic</button><input id="textA" type="text" placeholder="type interviewer line, Enter to send"></div>
+      <div class="row"><span class="lbl">Founder</span><button id="micB">🖥 Tab audio</button><input id="textB" type="text" placeholder="type founder line, Enter to send"></div>
+      <div class="row"><span class="lbl">Demo</span><button id="script">▶ Next scripted founder line</button><span id="scriptPos" class="pill"></span></div>
     </div>
   </section>
   <section class="panel">
@@ -303,6 +303,7 @@ $("addBtn").onclick = () => { const v = $("addInput").value.trim(); if (v) { $("
 $("addInput").onkeydown = (e) => e.key === "Enter" && $("addBtn").click();
 
 async function send(channel, form) {
+  if (!(await ensureCall())) return;
   form.append("channel", channel);
   const r = await api(`/api/session/${sid}/utterance`, { method:"POST", body:form });
   if (!r.utterance) return;
@@ -315,14 +316,18 @@ async function send(channel, form) {
   $("status").textContent = `⏱ ${Object.entries(r.timing_ms).map(([k, v]) => k + " " + v + "ms").join(" · ")}`;
 }
 function sendText(channel, input, speak) {
-  const t = input.value.trim(); if (!t) return; input.value = "";
+  const t = input.value.trim(); if (!t) return;
+  if (!sid && !$("domain").value.trim()) { ensureCall(); return; }  // keep the text until a company is entered
+  input.value = "";
   const f = new FormData(); f.append("text", t); if (speak) f.append("speak", "true");
   send(channel, f).catch((e) => ($("status").textContent = "Error: " + e.message));
 }
 $("textA").onkeydown = (e) => e.key === "Enter" && sendText("interviewer", $("textA"));
 $("textB").onkeydown = (e) => e.key === "Enter" && sendText("subject", $("textB"), true);
-$("script").onclick = () => {
-  if (!script.length || scriptIdx >= script.length) return;
+$("script").onclick = async () => {
+  if (!(await ensureCall())) return;
+  if (!script.length) { $("status").textContent = "Demo lines are still being written; click again in a moment."; return; }
+  if (scriptIdx >= script.length) { $("status").textContent = "All demo lines played. Type more on the founder line."; return; }
   const f = new FormData(); f.append("text", script[scriptIdx++]); f.append("speak", "true");
   $("scriptPos").textContent = `${scriptIdx}/${script.length}`;
   send("subject", f).catch((e) => ($("status").textContent = "Error: " + e.message));
@@ -353,25 +358,38 @@ async function toggleChannel(channel, btn, getStream) {
   live[channel] = { stop: () => { stopped = true; rec && rec.state === "recording" && rec.stop(); stream.getTracks().forEach((t) => t.stop()); delete live[channel]; btn.classList.remove("on"); } };
   btn.classList.add("on"); cycle();
 }
-$("micA").onclick = () => toggleChannel("interviewer", $("micA"), () => navigator.mediaDevices.getUserMedia({ audio: true })).catch((e) => ($("status").textContent = e.message));
-$("micB").onclick = () => toggleChannel("subject", $("micB"), () => navigator.mediaDevices.getDisplayMedia({ video: true, audio: true })).catch((e) => ($("status").textContent = e.message));
+$("micA").onclick = async () => (await ensureCall()) && toggleChannel("interviewer", $("micA"), () => navigator.mediaDevices.getUserMedia({ audio: true })).catch((e) => ($("status").textContent = e.message));
+$("micB").onclick = async () => (await ensureCall()) && toggleChannel("subject", $("micB"), () => navigator.mediaDevices.getDisplayMedia({ video: true, audio: true })).catch((e) => ($("status").textContent = e.message));
 
-$("prepare").onclick = async () => {
+// Typing, the mics and the script work at any time: if no call is running yet, one starts first.
+let starting = null;
+async function ensureCall() {
+  if (sid) return true;
+  if (!$("domain").value.trim()) {
+    $("status").textContent = "Enter the company domain at the top first, then send your line again.";
+    $("domain").focus(); return false;
+  }
+  starting = starting || startCall();
+  await starting; starting = null;
+  return !!sid;
+}
+$("prepare").onclick = () => startCall();
+async function startCall() {
   $("status").textContent = "Building dossier from Crustdata into Neo4j…"; $("prepare").disabled = true;
   try {
     const r = await api("/api/session/prepare", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ company_domain:$("domain").value, founder_urls:$("person").value }) });
     sid = r.session_id; claimCount = 0; scriptIdx = 0;
     $("transcript").innerHTML = ""; $("claims").innerHTML = ""; $("whisper").style.display = "none";
     nodes.clear(); setGraph(r.graph); renderDossier(r.dossier, r.open_items);
-    ["micA", "micB", "textA", "textB", "script", "end", "addInput", "addBtn"].forEach((id) => ($(id).disabled = false));
+    ["end", "addInput", "addBtn"].forEach((id) => ($(id).disabled = false));
     $("added").innerHTML = ""; $("chips").innerHTML = ""; $("suggest").style.display = "none";
     $("status").textContent = `Dossier ready in ${r.ms} ms. Call is live.`;
     $("scriptPos").textContent = "writing demo lines…"; script = [];
-    api(`/api/session/${sid}/demo_lines`).then((d) => { script = d.lines; $("scriptPos").textContent = `0/${script.length}`; })
+    api(`/api/session/${sid}/demo_lines`).then((d) => { script = d.lines; $("scriptPos").textContent = `0/${script.length}`; $("scriptPos").title = d.file ? `Edit lines in ${d.file}` : ""; })
       .catch(() => ($("scriptPos").textContent = "no demo lines"));
   } catch (e) { $("status").textContent = "Error: " + e.message; }
   $("prepare").disabled = false;
-};
+}
 $("end").onclick = async () => {
   Object.values(live).forEach((l) => l.stop());
   $("status").textContent = "Writing the diligence memo…";
