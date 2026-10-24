@@ -22,6 +22,8 @@
   button { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:7px 12px; cursor:pointer; }
   button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
   button.on { background:var(--bad); border-color:var(--bad); color:#fff; }
+  button.toggle[aria-pressed="true"] { background:var(--okbg); border-color:var(--ok); color:var(--ok); }
+  button.toggle[aria-pressed="false"] { color:var(--muted); text-decoration:line-through; }
   button:disabled { opacity:.45; cursor:default; }
   .pill { font-size:12px; padding:2px 8px; border-radius:10px; background:var(--line); color:var(--muted); }
   main { display:grid; grid-template-columns: minmax(300px,1fr) minmax(340px,1.15fr) minmax(300px,1fr); gap:12px; padding:12px; height:calc(100vh - 58px); }
@@ -95,6 +97,7 @@
     <div class="controls">
       <div class="row"><span class="lbl">Interviewer</span><button id="micA">🎙 Mic</button><input id="textA" type="text" placeholder="type interviewer line"><button id="sendA">Send</button></div>
       <div class="row"><span class="lbl">Candidate</span><button id="micB">🖥 Tab audio</button><input id="textB" type="text" placeholder="type candidate line"><button id="sendB">Send</button></div>
+      <div class="row"><span class="lbl">Voice</span><button id="speakCandidate" class="toggle" aria-pressed="true" title="Read typed and scripted candidate lines aloud">🔊 Speak candidate</button><button id="speakWhispers" class="toggle" aria-pressed="true" title="Play whispers aloud (they always show as text)">🎧 Speak whispers</button></div>
       <div class="row"><span class="lbl">Demo</span><button id="script">▶ Next scripted candidate line</button><span id="scriptPos" class="pill"></span></div>
     </div>
   </section>
@@ -200,6 +203,20 @@ function setGraph(g) {
   for (const n of g.nodes) nodes.update({ id:n.id, label:n.label, color:COLORS[n.kind] || "#64748b", size:n.kind === "company" ? 20 : n.kind.startsWith("claim") ? 10 : 13, shape:n.kind.startsWith("claim") ? "box" : "dot", font:n.kind.startsWith("claim") ? { color:"#fff", size:10 } : undefined });
   edges.clear(); edges.add(g.edges.map((e, i) => ({ id:i, ...e, color:{ color: e.label === "CONTRADICTED" ? "#dc2626" : e.label === "VERIFIED" ? "#16a34a" : "#9ca3af" } })));
 }
+// Voice toggles, remembered per browser.
+const voiceOn = (id) => $(id).getAttribute("aria-pressed") === "true";
+for (const id of ["speakCandidate", "speakWhispers"]) {
+  let saved = null;
+  try { saved = localStorage.getItem("sc." + id); } catch {}
+  if (saved !== null) $(id).setAttribute("aria-pressed", saved);
+  $(id).onclick = () => {
+    const on = !voiceOn(id);
+    $(id).setAttribute("aria-pressed", String(on));
+    try { localStorage.setItem("sc." + id, String(on)); } catch {}
+    if (!on) { queue = []; player.pause(); }  // stop whatever is playing now
+  };
+}
+
 function play(chunks) { queue.push(...(chunks || [])); if (player.paused || player.ended) next(); }
 function next() { if (!queue.length) return; player.src = "data:audio/mpeg;base64," + queue.shift(); player.play().catch(() => {}); }
 player.addEventListener("ended", next);
@@ -259,7 +276,7 @@ function showWhisper(id, preview, why) {
   $("whisper").innerHTML = `🎧 ${esc(preview)}<small>preparing whisper · ${esc(why)}</small>`;
   api(`/api/session/${sid}/whisper/${id}`).then((w) => {
     $("whisper").innerHTML = `🎧 ${esc(w.text)}<small>whispered to interviewer · ${esc(why)}</small>`;
-    play(w.audio);
+    if (voiceOn("speakWhispers")) play(w.audio);
   }).catch(() => {});
 }
 
@@ -313,7 +330,7 @@ async function send(channel, form) {
   const r = await api(`/api/session/${sid}/utterance`, { method:"POST", body:form });
   if (!r.utterance) return;
   addUtterance(r.utterance);
-  if (r.subject_audio && r.subject_audio.length) play(r.subject_audio);
+  if (r.subject_audio && r.subject_audio.length && voiceOn("speakCandidate")) play(r.subject_audio);
   for (const c of r.claims) addClaim(c);
   for (const f of r.flags || []) addFlag(f);
   for (const m of r.suggestions || []) addSuggestion(m);
@@ -324,7 +341,7 @@ function sendText(channel, input, speak) {
   const t = input.value.trim(); if (!t) return;
   if (!sid && !$("domain").value.trim()) { ensureCall(); return; }  // keep the text until a company is entered
   input.value = "";
-  const f = new FormData(); f.append("text", t); if (speak) f.append("speak", "true");
+  const f = new FormData(); f.append("text", t); if (speak && voiceOn("speakCandidate")) f.append("speak", "true");
   send(channel, f).catch((e) => ($("status").textContent = "Error: " + e.message));
 }
 // Enter or the Send button. keyup avoids IME/autocomplete swallowing Enter on keydown.
@@ -336,7 +353,7 @@ $("script").onclick = async () => {
   if (!(await ensureCall())) return;
   if (!script.length) { $("status").textContent = "Demo lines are still being written; click again in a moment."; return; }
   if (scriptIdx >= script.length) { $("status").textContent = "All demo lines played. Type more on the candidate line."; return; }
-  const f = new FormData(); f.append("text", script[scriptIdx++]); f.append("speak", "true");
+  const f = new FormData(); f.append("text", script[scriptIdx++]); if (voiceOn("speakCandidate")) f.append("speak", "true");
   $("scriptPos").textContent = `${scriptIdx}/${script.length}`;
   send("subject", f).catch((e) => ($("status").textContent = "Error: " + e.message));
 };
