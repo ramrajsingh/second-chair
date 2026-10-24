@@ -145,9 +145,17 @@ def utterance(sid: str, channel: str = Form(...), audio: UploadFile | None = Fil
     context = s["context"] + " Previous line: " + (s["recent"][-1] if s["recent"] else "none")
     s["recent"].append(f"{channel}: {heard.english}")
 
-    results = []
+    results, flags = [], []
+    if channel == "interviewer":
+        # The latest interviewer line is the open question; replies are judged against it until answered.
+        s["open_q"] = {"uid": uid, "text": heard.english, "answer": ""}
     if channel == "subject":
         t = time.time()
+        q = s.get("open_q")
+        evasion_f = None
+        if q:
+            q["answer"] = (q["answer"] + " " + heard.english).strip()
+            evasion_f = POOL.submit(engine.evasion, q["text"], q["answer"])  # runs alongside extraction
         claims = []
         extracted = engine.extract(heard.english, context)
         for c in extracted["claims"]:
@@ -162,11 +170,24 @@ def utterance(sid: str, channel: str = Form(...), audio: UploadFile | None = Fil
         results = list(POOL.map(lambda c: _check_claim(s, sid, uid, c), claims))
         timing["verify"] = int((time.time() - t) * 1000)
         suggestions = _suggestions(s, extracted["mentions"])
+        if evasion_f:
+            ev = evasion_f.result()
+            if not ev["is_question"] or ev["verdict"] == "answered":
+                s["open_q"] = None
+            else:  # flagged once per question
+                s["open_q"] = None
+                detail = f"{'Evaded' if ev['verdict'] == 'evaded' else 'Partly answered'}: “{q['text']}”. Missing: {ev['missing']}."
+                fid = engine.record_flag(sid, "evasion", uid, q["uid"], detail, ev["follow_up"])
+                s.setdefault("whispers", {})[fid] = POOL.submit(_speak, fid, f"Not answered: {ev['missing']}. Ask: {ev['follow_up']}")
+                flags.append({"id": fid, "kind": "evasion", "verdict": ev["verdict"], "question": q["text"],
+                              "missing": ev["missing"], "follow_up": ev["follow_up"], "detail": detail,
+                              "whisper_pending": True})
+            timing["evasion"] = "parallel"
     else:
         suggestions = []
     return {"utterance": {"id": uid, "channel": channel, "text": heard.english, "original": heard.original,
                           "language": heard.language},
-            "claims": results, "suggestions": suggestions, "subject_audio": subject_audio.result() if subject_audio else [],
+            "claims": results, "flags": flags, "suggestions": suggestions, "subject_audio": subject_audio.result() if subject_audio else [],
             "timing_ms": timing}
 
 
@@ -174,13 +195,20 @@ def _check_claim(s: dict, sid: str, uid: str, c: dict) -> dict:
     cypher: list = []
     verdict = engine.verify(c, s["company_key"], s["person_pid"], cypher, s["scope"])
     cid = engine.record(sid, uid, c, verdict, None, cypher)
+    shift = engine.find_shift(cid, cypher)
     if verdict["status"] == "contradicted":
         # The card goes back now; the spoken whisper is prepared in the background
-        # and fetched by the page from /whisper/{cid}.
-        s.setdefault("whispers", {})[cid] = POOL.submit(_whisper, cid, c, verdict)
+        # and fetched by the page from /whisper/{cid}. A shifting answer makes it sharper.
+        said = {**verdict, "finding": verdict["finding"] + (
+            f" Also, {shift['when']} they said {shift['previous']:g}." if shift else "")}
+        s.setdefault("whispers", {})[cid] = POOL.submit(_whisper, cid, c, said)
+    elif shift:
+        s.setdefault("whispers", {})[cid] = POOL.submit(
+            _speak, cid, f"Shifting answer: {shift['when']} it was {shift['previous']:g}, now {c['number']:g}. Ask which is right.")
     elif verdict["status"] == "unverifiable" and verdict.get("target") is None and c["company"]:
         s.setdefault("pending", []).append((uid, c))  # re-checked when that company is added
-    return {"id": cid, **c, **verdict, "whisper_pending": verdict["status"] == "contradicted", "cypher": cypher}
+    return {"id": cid, **c, **verdict, "shift": shift, "cypher": cypher,
+            "whisper_pending": verdict["status"] == "contradicted" or bool(shift)}
 
 
 def _known(s: dict, name: str) -> bool:
@@ -239,6 +267,10 @@ def add_to_dossier(sid: str, req: AddEntity):
     rechecked = list(POOL.map(lambda p: _check_claim(s, sid, p[0], p[1]), ready))
     return {"added": entry, "rechecked": rechecked, "graph": graph(sid)["graph"],
             "ms": int((time.time() - t0) * 1000)}
+
+
+def _speak(wid: str, text: str) -> dict:
+    return {"text": text, "audio": voice.speak(text, "en-IN")[0]}
 
 
 def _whisper(cid: str, claim: dict, verdict: dict) -> dict:
@@ -322,12 +354,24 @@ def end(sid: str):
     transcript = db.query("""
         MATCH (:Session {id: $sid})-[:HAS_UTTERANCE]->(u:Utterance)
         OPTIONAL MATCH (u)-[:MADE_CLAIM]->(c:Claim)
-        WITH u, collect(c {.statement, .status, .finding, .evidence}) AS claims ORDER BY u.seq
+        WITH u, collect(c {.statement, .status, .finding, .evidence, .hedge}) AS claims ORDER BY u.seq
         RETURN u.speaker AS speaker, u.text AS text, claims""", {"sid": sid})
-    memo = engine.memo({"dossier": card, "transcript": transcript})
+    evasions = db.query("""
+        MATCH (:Session {id: $sid})-[:HAS_UTTERANCE]->(a:Utterance)-[:RAISED]->(f:Flag {kind: 'evasion'})
+        OPTIONAL MATCH (f)-[:ABOUT_QUESTION]->(q:Utterance)
+        RETURN q.text AS question, a.text AS answer, f.detail AS detail, f.follow_up AS follow_up""", {"sid": sid})
+    shifts = db.query("""
+        MATCH (:Session {id: $sid})-[:HAS_UTTERANCE]->(:Utterance)-[:MADE_CLAIM]->(cl:Claim)-[:SHIFTED_FROM]->(prev:Claim)
+        RETURN cl.statement AS now, prev.statement AS before, prev.session = $sid AS same_call,
+               toString(date(prev.at)) AS before_date""", {"sid": sid})
+    memo = engine.memo({"dossier": card, "transcript": transcript, "evasions": evasions, "shifting_answers": shifts})
     db.query("MATCH (s:Session {id: $sid}) SET s.memo = $memo, s.ended_at = datetime()", {"sid": sid, "memo": memo})
     counts = {}
     for u in transcript:
         for c in u["claims"]:
             counts[c["status"]] = counts.get(c["status"], 0) + 1
+    if evasions:
+        counts["evasions"] = len(evasions)
+    if shifts:
+        counts["shifting answers"] = len(shifts)
     return {"memo": memo, "counts": counts}

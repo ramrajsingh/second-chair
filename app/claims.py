@@ -37,6 +37,8 @@ Also list in `mentions` every other company or person the speaker names (competi
 advisors, investors, colleagues), except the speaker and their own company.
 Extract claims ONLY from the Utterance. The context is only for resolving references like "we", "she" or
 "the company"; never re-extract claims that appear in the context.
+Set `hedge` to the exact softening words if the speaker qualified a checkable fact ("about 200", "almost $20M",
+"we're tracking toward 3x"), else null.
 Ignore opinions, plans and vague statements. Return an empty list if there are no checkable claims.
 Use null for unknown fields. The speaker may mix Hindi and English; output English."""
 
@@ -56,9 +58,11 @@ CLAIM_SCHEMA = {
             "round_type": {"type": ["string", "null"]},
             "investor": {"type": ["string", "null"]},
             "person": {"type": ["string", "null"]},
+            "hedge": {"type": ["string", "null"],
+                      "description": "The qualifier softening the claim (about, roughly, almost, north of, tracking toward), or null"},
         },
         "required": ["type", "statement", "number", "period_months", "company", "title", "start_year",
-                     "end_year", "round_type", "investor", "person"],
+                     "end_year", "round_type", "investor", "person", "hedge"],
         "additionalProperties": False,
     }}},
     "required": ["claims", "mentions"],
@@ -82,8 +86,31 @@ Use only facts present in the dossier; skip claim types the dossier has no data 
 Hinglish (Hindi in Latin script mixed with English). Return JSON: {"lines": ["...", ...]}."""
 
 MEMO_PROMPT = """Write a concise diligence memo in Markdown from the call record below. Sections: Summary (2-3 sentences),
-Claims checked (a table: claim, verdict, evidence with source), Red flags, Questions for the next call. Every factual
+Claims checked (a table: claim, verdict, evidence with source; mark hedged claims with the hedge words), Evasions and
+shifting answers (questions not answered, and numbers that changed within or across calls, quoting both versions),
+Red flags, Questions for the next call. Every factual
 statement must cite its source as [Crustdata: <field>] or [Call: <speaker quote>]. No speculation beyond the data."""
+
+NUMERIC_TYPES = ["headcount", "growth", "funding_total", "funding_round", "hiring"]
+
+EVASION_PROMPT = """You judge a founder's answer on an investor diligence call. First decide whether the interviewer's line is
+a question that asks for specific information (a number, a fact, a name, a yes/no). If not, return is_question=false.
+If it is, judge the answer so far:
+- answered: it gives the information asked for (even if unflattering)
+- partial: it touches the topic but leaves out the specific thing asked (e.g. no number when a number was asked)
+- evaded: it pivots to another topic, talks around the question, or answers a different question
+`missing`: what specifically was not answered (short). `follow_up`: one short, polite but pointed question the interviewer
+can ask to get it (max 20 words). Be strict about missing numbers: "retention is strong" does not answer "what is your
+churn?". But an approximate number IS an answer ("almost $20M", "about 150 people" answer "how much/how many");
+precision is not your concern, only whether the asked-for information was given."""
+
+EVASION_SCHEMA = {
+    "type": "object",
+    "properties": {"is_question": {"type": "boolean"},
+                   "verdict": {"type": "string", "enum": ["answered", "partial", "evaded"]},
+                   "missing": {"type": "string"}, "follow_up": {"type": "string"}},
+    "required": ["is_question", "verdict", "missing", "follow_up"], "additionalProperties": False,
+}
 
 COMPANY_LEVEL = {"headcount", "growth", "funding_total", "funding_round", "investor", "hiring"}
 
@@ -324,11 +351,57 @@ class ClaimEngine:
             MATCH (u:Utterance {id: $uid})
             CREATE (u)-[:MADE_CLAIM]->(c:Claim {id: $cid, session: $sid, type: $type, statement: $statement,
                 status: $status, finding: $finding, whisper: $whisper, evidence: $evidence, cypher: $cypher,
-                target: $target, at: datetime()})""", {"target": verdict.get("target"),
+                target: $target, claimed: $claimed, hedge: $hedge, at: datetime()})""", {
+            "target": verdict.get("target"), "claimed": claim.get("number"), "hedge": claim.get("hedge"),
             "uid": utterance_id, "cid": cid, "sid": sid, "type": claim["type"], "statement": claim["statement"],
             "status": verdict["status"], "finding": verdict["finding"], "whisper": whisper,
             "evidence": json.dumps(verdict["evidence"]), "cypher": json.dumps(cypher)})
         return cid
+
+    def find_shift(self, cid: str, log: list) -> dict | None:
+        """Has this founder (or anyone on this company's calls) given a different number for the same fact,
+        earlier in this call or on a previous one? Links (:Claim)-[:SHIFTED_FROM]->(:Claim) when found."""
+        rows = self.db.query("""
+            MATCH (cl:Claim {id: $cid})
+            WHERE cl.claimed IS NOT NULL AND cl.target IS NOT NULL AND cl.type IN $numeric
+            MATCH (now:Session {id: cl.session})
+            MATCH (prev:Claim {type: cl.type, target: cl.target})
+            WHERE prev.id <> cl.id AND prev.claimed IS NOT NULL
+              AND abs(prev.claimed - cl.claimed) > 0.15 * abs(prev.claimed)
+            MATCH (then:Session {id: prev.session})
+            WHERE then = now OR then.person = now.person OR then.company = now.company
+            WITH cl, prev, then, now ORDER BY prev.at DESC LIMIT 1
+            MERGE (cl)-[:SHIFTED_FROM]->(prev)
+            RETURN prev.statement AS statement, prev.claimed AS claimed, then = now AS same_call,
+                   toString(date(prev.at)) AS on""", {"cid": cid, "numeric": NUMERIC_TYPES}, log, "shifting answers")
+        if not rows:
+            return None
+        r = rows[0]
+        return {"previous": r["claimed"], "statement": r["statement"],
+                "when": "earlier in this call" if r["same_call"] else f"on the call of {r['on']}"}
+
+    def evasion(self, question: str, answer: str) -> dict:
+        """Did the founder actually answer the interviewer's question?"""
+        resp = self.llm.chat.completions.create(
+            model=config.OPENAI_FAST_MODEL,
+            messages=[{"role": "system", "content": EVASION_PROMPT},
+                      {"role": "user", "content": f"Question: {question}\nAnswer so far: {answer}"}],
+            response_format={"type": "json_schema", "json_schema": {"name": "evasion", "strict": True,
+                                                                    "schema": EVASION_SCHEMA}})
+        return json.loads(resp.choices[0].message.content or "{}")
+
+    def record_flag(self, sid: str, kind: str, answer_uid: str, question_uid: str | None, detail: str,
+                    follow_up: str) -> str:
+        fid = uuid.uuid4().hex[:12]
+        self.db.query("""
+            MATCH (a:Utterance {id: $auid})
+            CREATE (a)-[:RAISED]->(f:Flag {id: $fid, session: $sid, kind: $kind, detail: $detail,
+                                           follow_up: $follow_up, at: datetime()})
+            WITH f OPTIONAL MATCH (q:Utterance {id: $quid})
+            FOREACH (_ IN CASE WHEN q IS NULL THEN [] ELSE [1] END | CREATE (f)-[:ABOUT_QUESTION]->(q))""",
+                      {"auid": answer_uid, "quid": question_uid, "fid": fid, "sid": sid, "kind": kind,
+                       "detail": detail, "follow_up": follow_up})
+        return fid
 
     def demo_lines(self, card: dict) -> list[str]:
         resp = self.llm.chat.completions.create(

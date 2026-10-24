@@ -23,6 +23,8 @@ before the call: Crustdata person + company enrichment ─► Neo4j        after
 (:Company)-[:RAISED]->(:FundingRound {date, amount_usd, round_type})<-[:INVESTED_IN {lead}]-(:Investor)
 (:Session)-[:ABOUT]->(:Person | :Company)
 (:Session)-[:ADDED]->(:Person | :Company)          // added mid-call
+(:Utterance)-[:RAISED]->(:Flag {kind: 'evasion'})-[:ABOUT_QUESTION]->(:Utterance)
+(:Claim {claimed, hedge})-[:SHIFTED_FROM]->(:Claim)
 (:Session)-[:HAS_UTTERANCE]->(:Utterance {speaker, text, original, language})-[:MADE_CLAIM]->(:Claim {status, finding, evidence, cypher})
 ```
 
@@ -57,6 +59,13 @@ Feed the call in any combination:
 - **🖥 Tab audio:** share the video-call tab with "Share tab audio" ticked, for the founder's side.
 - **Typed lines** on either channel.
 - **▶ Next scripted founder line:** demo lines voiced in a male voice.
+
+**Evasions and shifting answers:** beyond checking facts, Second Chair watches *how* the founder answers:
+- **Unanswered questions:** each reply to an interviewer question is judged *answered / partly answered / evaded* (run alongside claim spotting, so no extra wait). An evasion becomes `(:Utterance)-[:RAISED]->(:Flag)-[:ABOUT_QUESTION]->(:Utterance)` and the follow-up question is whispered, e.g. *"Not answered: monthly churn. Ask: can you share your exact monthly churn percentage?"*
+- **Hedging:** qualifiers on checkable facts ("roughly 200", "almost $20M") are tagged on the claim and in the memo.
+- **Shifting answers:** a number that changes for the same fact, earlier in the call or on a previous call with the same founder or company, is linked `(:Claim)-[:SHIFTED_FROM]->(:Claim)` and whispered: *"earlier 200, now 150, data shows 84"*.
+
+The memo gets an **Evasions and shifting answers** section quoting both versions.
 
 **Grow the dossier mid-call:** when the founder names a company or person that isn't in the dossier (a competitor, past employer, advisor), a **➕ chip** suggests adding it, or you can type a domain, company name or profile URL into **Add**. It's enriched from Crustdata, linked to the call (`(:Session)-[:ADDED]->`), and becomes checkable: "Apollo only has 100 people" is checked against Apollo's own headcount, and claims made before you added it are re-checked automatically.
 

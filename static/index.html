@@ -47,6 +47,9 @@
   .card .st { font-size:11px; font-weight:700; text-transform:uppercase; }
   .card.verified .st { color:var(--ok); } .card.contradicted .st { color:var(--bad); } .card.unverifiable .st { color:var(--warn); }
   .card .src { font-size:12px; color:var(--muted); }
+  .card.evasion { border-left-color:#d97706; background:var(--warnbg); } .card.evasion .st { color:#d97706; }
+  .tag { display:inline-block; font-size:11px; padding:0 6px; border-radius:8px; background:var(--line); color:var(--muted); margin-left:4px; }
+  .shift { font-size:12px; font-weight:600; color:var(--bad); margin-top:2px; }
   details code { display:block; white-space:pre-wrap; word-break:break-word; font-size:11px; color:var(--muted); margin-top:4px; }
   #graph { flex:1; min-height:280px; }
   #dossier table { width:100%; border-collapse:collapse; font-size:13px; }
@@ -157,18 +160,31 @@ function addClaim(c) {
   const d = document.createElement("div");
   d.className = "card " + c.status;
   d.innerHTML = `<span class="st">${esc(c.status)}</span> · <span style="font-size:12px;color:var(--muted)">${esc(c.type)}</span>
-    <div><b>“${esc(c.statement)}”</b></div><div>${esc(c.finding)}</div>
+    <div><b>“${esc(c.statement)}”</b>${c.hedge ? `<span class="tag" title="hedged">hedged: ${esc(c.hedge)}</span>` : ""}</div><div>${esc(c.finding)}</div>
+    ${c.shift ? `<div class="shift">↺ Shifting answer: ${esc(c.shift.when)} it was ${esc(c.shift.previous)} (“${esc(c.shift.statement)}”)</div>` : ""}
     <div class="src">Source: ${c.evidence.map((e) => esc(e.source) + " = " + esc(e.value)).join("; ") || "none"}</div>
     ${c.cypher.length ? `<details><summary style="font-size:12px;cursor:pointer">Cypher (${c.cypher.map((q) => q.ms + "ms").join(", ")})</summary>${c.cypher.map((q) => `<code>${esc(q.cypher)}</code>`).join("")}</details>` : ""}`;
   $("claims").prepend(d);
-  if (c.whisper_pending) {
-    $("whisper").style.display = "block";
-    $("whisper").innerHTML = `🎧 ${esc(c.finding)}<small>preparing whisper · ${esc(c.type)} contradiction</small>`;
-    api(`/api/session/${sid}/whisper/${c.id}`).then((w) => {
-      $("whisper").innerHTML = `🎧 ${esc(w.text)}<small>whispered to interviewer · ${esc(c.type)} contradiction</small>`;
-      play(w.audio);
-    }).catch(() => {});
-  }
+  if (c.whisper_pending) showWhisper(c.id, c.finding, c.status === "contradicted" ? `${c.type} contradiction` : "shifting answer");
+}
+
+function showWhisper(id, preview, why) {
+  $("whisper").style.display = "block";
+  $("whisper").innerHTML = `🎧 ${esc(preview)}<small>preparing whisper · ${esc(why)}</small>`;
+  api(`/api/session/${sid}/whisper/${id}`).then((w) => {
+    $("whisper").innerHTML = `🎧 ${esc(w.text)}<small>whispered to interviewer · ${esc(why)}</small>`;
+    play(w.audio);
+  }).catch(() => {});
+}
+
+function addFlag(f) {
+  if (!claimCount++) $("claims").innerHTML = "";
+  const d = document.createElement("div");
+  d.className = "card evasion";
+  d.innerHTML = `<span class="st">${f.verdict === "evaded" ? "evaded" : "partly answered"}</span> · <span style="font-size:12px;color:var(--muted)">unanswered question</span>
+    <div><b>Q: “${esc(f.question)}”</b></div><div>Missing: ${esc(f.missing)}</div><div class="src">Ask: ${esc(f.follow_up)}</div>`;
+  $("claims").prepend(d);
+  showWhisper(f.id, "Not answered: " + f.missing, "evasion");
 }
 
 function addSuggestion(m) {
@@ -207,6 +223,7 @@ async function send(channel, form) {
   addUtterance(r.utterance);
   if (r.subject_audio && r.subject_audio.length) play(r.subject_audio);
   for (const c of r.claims) addClaim(c);
+  for (const f of r.flags || []) addFlag(f);
   for (const m of r.suggestions || []) addSuggestion(m);
   if (r.claims.length) setGraph((await api(`/api/session/${sid}/graph`)).graph);
   $("status").textContent = `⏱ ${Object.entries(r.timing_ms).map(([k, v]) => k + " " + v + "ms").join(" · ")}`;
