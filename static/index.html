@@ -114,7 +114,7 @@
       <h2>Dossier (Crustdata)</h2>
       <div id="dossier" class="scroll"><em style="color:var(--muted)">Built before the call so live checks never wait on an API.</em></div>
       <div id="added" style="padding:0 12px"></div>
-      <div class="addrow"><input id="addInput" type="text" placeholder="Add company (domain or name) or person (profile URL)" disabled><button id="addBtn" disabled>Add</button></div>
+      <div class="addrow"><input id="addInput" type="text" placeholder="Add company (domain or name) or person (profile URL)"><button id="addBtn">Add</button></div>
     </section>
   </div>
 </main>
@@ -284,6 +284,7 @@ function addSuggestion(m) {
   $("chips").appendChild(b);
 }
 async function addEntity(value, chip) {
+  if (!(await ensureCall())) return;
   $("status").textContent = `Adding ${value} from Crustdata…`;
   if (chip) chip.disabled = true;
   try {
@@ -299,8 +300,12 @@ async function addEntity(value, chip) {
     $("status").textContent = `${a.name} added to the dossier in ${r.ms} ms. Claims about it can now be checked.`;
   } catch (e) { $("status").textContent = "Couldn't add: " + e.message; if (chip) chip.disabled = false; }
 }
-$("addBtn").onclick = () => { const v = $("addInput").value.trim(); if (v) { $("addInput").value = ""; addEntity(v); } };
-$("addInput").onkeydown = (e) => e.key === "Enter" && $("addBtn").click();
+$("addBtn").onclick = () => {
+  const v = $("addInput").value.trim(); if (!v) return;
+  if (!sid && !$("domain").value.trim()) { ensureCall(); return; }  // keep the text until a company is entered
+  $("addInput").value = ""; addEntity(v);
+};
+$("addInput").addEventListener("keyup", (e) => { if (e.key === "Enter") $("addBtn").click(); });
 
 async function send(channel, form) {
   if (!(await ensureCall())) return;
@@ -384,7 +389,7 @@ async function startCall() {
     sid = r.session_id; claimCount = 0; scriptIdx = 0;
     $("transcript").innerHTML = ""; $("claims").innerHTML = ""; $("whisper").style.display = "none";
     nodes.clear(); setGraph(r.graph); renderDossier(r.dossier, r.open_items);
-    ["end", "addInput", "addBtn"].forEach((id) => ($(id).disabled = false));
+    $("end").disabled = false;
     $("added").innerHTML = ""; $("chips").innerHTML = ""; $("suggest").style.display = "none";
     $("status").textContent = `Dossier ready in ${r.ms} ms. Call is live.`;
     $("scriptPos").textContent = "writing demo lines…"; script = [];
