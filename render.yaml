@@ -1,0 +1,33 @@
+# Render Blueprint: New > Blueprint > pick this repo. Render asks for the secret values on first deploy.
+services:
+  - type: web
+    name: second-chair
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.server:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      # Required on a public URL: without it anyone could spend your API credits or use Reset all.
+      - key: APP_PASSCODE
+        sync: false
+      # Neo4j AuraDB
+      - key: NEO4J_URI
+        sync: false
+      - key: NEO4J_USERNAME
+        sync: false
+      - key: NEO4J_PASSWORD
+        sync: false
+      - key: NEO4J_DATABASE
+        sync: false
+      # Crustdata (people & company data), Sarvam (speech), OpenAI (claim checks, memo)
+      - key: CRUSTDATA_API_KEY
+        sync: false
+      - key: SARVAM_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-4.1

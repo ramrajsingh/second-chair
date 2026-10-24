@@ -81,4 +81,14 @@ The memo gets an **Evasions and shifting answers** section quoting both versions
 
 **End call → memo** writes the cited memo and saves it to the session.
 
-Reset between demos: `python -m scripts.reset`
+Reset between demos: `python -m scripts.reset` (or the **Reset** / **Reset all** buttons at the top right).
+
+## Deploy (Render, free tier)
+
+`render.yaml` is a Render Blueprint. In Render, choose **New → Blueprint**, pick this repo, and fill in the secrets: `APP_PASSCODE`, the `NEO4J_*` settings, `CRUSTDATA_API_KEY`, `SARVAM_API_KEY` and `OPENAI_API_KEY`.
+
+- **Set `APP_PASSCODE`.** On a public URL every `/api` call then needs it; the page asks once and remembers it. Without it, anyone with the link could spend your API credits or wipe the database with **Reset all**.
+- **HTTPS is required for the microphone and tab audio.** Render provides it.
+- **Free instances sleep** after about 15 minutes idle (the first request then takes 30–60 s), and open calls resume from Neo4j afterwards.
+- **The disk isn't permanent.** The Crustdata response cache and newly generated demo lines are lost on restart, so a rebuilt dossier may spend credits again; committed demo lines stay.
+- **Region:** pick the Render region closest to your Neo4j Aura instance, since every claim check is a database round trip.

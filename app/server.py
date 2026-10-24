@@ -3,6 +3,7 @@
     uvicorn app.server:app --port 8010
 """
 
+import hmac
 import json
 import logging
 import re
@@ -10,8 +11,8 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -24,6 +25,21 @@ from app.voice import Voice
 log = logging.getLogger("copilot")
 app = FastAPI(title="Second Chair")
 app.mount("/static", StaticFiles(directory=config.ROOT / "static"), name="static")
+
+
+@app.middleware("http")
+async def require_passcode(request: Request, call_next):
+    """On a public deployment, stop strangers from spending API credits or wiping the database."""
+    if config.APP_PASSCODE and request.url.path.startswith("/api/") and request.url.path != "/api/health":
+        given = request.headers.get("x-passcode", "")
+        if not hmac.compare_digest(given.encode(), config.APP_PASSCODE.encode()):
+            return JSONResponse({"detail": "passcode required"}, status_code=401)
+    return await call_next(request)
+
+
+@app.get("/api/health")
+def health():
+    return {"ok": True}
 
 db = Neo()
 setup_schema(db)

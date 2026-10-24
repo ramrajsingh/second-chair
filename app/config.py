@@ -11,6 +11,10 @@ NEO4J_USERNAME = os.environ.get("NEO4J_USERNAME", "neo4j")
 NEO4J_PASSWORD = os.environ.get("NEO4J_PASSWORD", "")
 NEO4J_DATABASE = os.environ.get("NEO4J_DATABASE") or "neo4j"
 
+# When set (e.g. on a public deployment), every /api call needs this passcode in the X-Passcode header.
+# Leave empty for local use.
+APP_PASSCODE = os.environ.get("APP_PASSCODE", "")
+
 CRUSTDATA_API_KEY = os.environ.get("CRUSTDATA_API_KEY", "")
 CRUSTDATA_BASE_URL = "https://api.crustdata.com"
 CRUSTDATA_API_VERSION = "2025-11-01"
