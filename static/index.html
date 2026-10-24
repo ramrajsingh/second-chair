@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Diligence Copilot</title>
+<title>Second Chair</title>
 <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
 <style>
@@ -64,7 +64,7 @@
 </head>
 <body>
 <header>
-  <h1>Diligence Copilot</h1>
+  <h1>Second Chair <span style="font-weight:400;font-size:12px;color:var(--muted)">· live diligence copilot</span></h1>
   <input id="domain" type="text" placeholder="company domain" style="width:190px">
   <input id="person" type="text" placeholder="founder profile URL (optional)" style="width:280px">
   <button id="prepare" class="primary">Build dossier &amp; start call</button>
@@ -99,7 +99,7 @@
     </section>
   </div>
 </main>
-<div id="memo"><h2 style="display:flex;justify-content:space-between;align-items:center">Diligence memo <button id="closeMemo">Close</button></h2><div class="scroll" id="memoBody"></div></div>
+<div id="memo"><h2 style="display:flex;justify-content:space-between;align-items:center">Second Chair · diligence memo <button id="closeMemo">Close</button></h2><div class="scroll" id="memoBody"></div></div>
 <script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));

@@ -1,6 +1,8 @@
-# Diligence Copilot
+# Second Chair
 
-A voice copilot for founder diligence calls. It listens to both sides of a call, checks every claim the founder makes against live company and people data from **Crustdata** stored in a **Neo4j** graph, whispers a sharp follow-up to the interviewer when a claim doesn't hold up, and writes a diligence memo with a source on every claim when the call ends.
+*Every diligence call deserves a second chair: one who's read the founder's whole history and checks every claim in real time.*
+
+Second Chair is a voice copilot for founder diligence calls. It listens to both sides of a call, checks every claim the founder makes against live company and people data from **Crustdata** stored in a **Neo4j** graph, whispers a sharp follow-up to the interviewer when a claim doesn't hold up, and writes a diligence memo with a source on every claim when the call ends.
 
 Built for **ContextCon Build: Services, Replaced** (Crustdata).
 

@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "diligence-copilot", "runtimeExecutable": ".venv/bin/uvicorn", "runtimeArgs": ["app.server:app", "--port", "8010"], "port": 8010 }
+    { "name": "second-chair", "runtimeExecutable": ".venv/bin/uvicorn", "runtimeArgs": ["app.server:app", "--port", "8010"], "port": 8010 }
   ]
 }

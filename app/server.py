@@ -1,4 +1,4 @@
-"""Diligence Copilot server: two call channels in, whispers + live dossier out, memo at the end.
+"""Second Chair server: two call channels in, whispers + live dossier out, memo at the end.
 
     uvicorn app.server:app --port 8010
 """
@@ -21,7 +21,7 @@ from app.neo import GraphError, Neo, setup_schema
 from app.voice import Voice
 
 log = logging.getLogger("copilot")
-app = FastAPI(title="Diligence Copilot")
+app = FastAPI(title="Second Chair")
 app.mount("/static", StaticFiles(directory=config.ROOT / "static"), name="static")
 
 db = Neo()
