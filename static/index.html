@@ -17,6 +17,8 @@
   body { margin:0; font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--ink); }
   header { display:flex; gap:10px; align-items:center; flex-wrap:wrap; padding:12px 16px; border-bottom:1px solid var(--line); }
   header h1 { font-size:16px; margin:0 8px 0 0; }
+  .header-right { margin-left:auto; display:flex; gap:6px; }
+  button.danger { color:var(--bad); border-color:var(--bad); }
   input, button { font:inherit; color:inherit; }
   input[type=text] { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:7px 10px; min-width:0; }
   button { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:7px 12px; cursor:pointer; }
@@ -89,6 +91,10 @@
   <button id="end" disabled>End call → memo</button>
   <span id="mode" class="pill"></span>
   <span id="status" style="color:var(--muted);font-size:13px"></span>
+  <div class="header-right">
+    <button id="resetCalls" title="Delete all calls, claims and memos. Dossiers stay.">Reset</button>
+    <button id="resetAll" class="danger" title="Empty the whole Neo4j database. Cached Crustdata data is kept.">Reset all</button>
+  </div>
 </header>
 <main>
   <section class="panel">
@@ -423,6 +429,26 @@ $("end").onclick = async () => {
   $("memo").style.display = "flex";
   $("status").textContent = `Memo saved to Neo4j · ${Object.entries(r.counts).map(([k, v]) => v + " " + k).join(", ")}`;
 };
+// Reset buttons: clear the database (after confirming) and return the page to its start state.
+async function doReset(all) {
+  const msg = all ? "Reset all: delete EVERYTHING in the Neo4j database (dossiers, people, companies, calls)?\n\nCached Crustdata data is kept, so rebuilding costs no credits."
+                  : "Reset: delete all calls, claims, flags and memos?\n\nDossiers (companies and people) are kept.";
+  if (!confirm(msg)) return;
+  Object.values(live).forEach((l) => l.stop());
+  queue = []; player.pause();
+  try {
+    const r = await api(`/api/admin/reset${all ? "?all=true" : ""}`, { method: "POST" });
+    sid = null; script = []; scriptIdx = 0; claimCount = 0;
+    $("transcript").innerHTML = ""; $("claims").innerHTML = ""; $("whisper").style.display = "none";
+    $("added").innerHTML = ""; $("chips").innerHTML = ""; $("suggest").style.display = "none";
+    $("nodePanel").style.display = "none"; nodes.clear(); edges.clear();
+    $("dossier").innerHTML = `<em style="color:var(--muted)">Built before the call so live checks never wait on an API.</em>`;
+    $("scriptPos").textContent = ""; $("end").disabled = true;
+    $("status").textContent = `${all ? "Database emptied" : "Calls cleared"}: ${r.deleted} nodes deleted.`;
+  } catch (e) { $("status").textContent = "Reset failed: " + e.message; }
+}
+$("resetCalls").onclick = () => doReset(false);
+$("resetAll").onclick = () => doReset(true);
 $("closeMemo").onclick = () => ($("memo").style.display = "none");
 
 (async () => {

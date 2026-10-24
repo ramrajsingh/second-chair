@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app import config, crustdata, dossier
+from app import admin, config, crustdata, dossier
 from app.claims import ClaimEngine, signature
 from app.crustdata import CrustdataError
 from app.neo import GraphError, Neo, setup_schema
@@ -37,6 +37,16 @@ sessions: dict[str, dict] = {}
 def index():
     # No caching: the page changes often and a stale copy silently runs old code.
     return FileResponse(config.ROOT / "static" / "index.html", headers={"Cache-Control": "no-store, max-age=0"})
+
+
+@app.post("/api/admin/reset")
+def reset(all: bool = False):
+    """Reset: delete all calls (dossiers stay). Reset all (?all=true): empty the database."""
+    n = admin.reset_all(db) if all else admin.reset_calls(db)
+    sessions.clear()
+    if all:
+        setup_schema(db)  # constraints and indexes were dropped with the data
+    return {"deleted": n, "all": all}
 
 
 @app.get("/api/config")
