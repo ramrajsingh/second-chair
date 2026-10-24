@@ -85,8 +85,9 @@ WHISPER_PROMPT = """You whisper into an interviewer's ear during a live diligenc
 made and the contradicting data, write ONE sentence of at most 25 words: what the data shows, then a sharp follow-up
 question to ask. No preamble. Example: "He says 200 people; data shows 84, down 12% this year. Ask what drove attrition." """
 
-DEMO_LINES_PROMPT = """You write test lines for demoing a diligence copilot. Given a dossier of real company and founder
-data, write 6 short things the founder might say on an investor call, in the first person, natural and spoken:
+DEMO_LINES_PROMPT = """You write test lines for demoing a diligence copilot. Given a dossier of real company and people
+data, write 6 short things the candidate (the person on the call) might say on a diligence or interview call, in the
+first person, natural and spoken:
 - 3 lines that are ACCURATE per the dossier (e.g. funding total, a real investor, a real past role, co-founder overlap)
 - 3 lines that are INFLATED or wrong (e.g. headcount about double the real number, "we tripled the team" when growth
   is flat or negative, a more senior title at a real past employer, a funding amount well above the real total)
@@ -101,7 +102,7 @@ statement must cite its source as [Crustdata: <field>] or [Call: <speaker quote>
 
 NUMERIC_TYPES = ["headcount", "growth", "funding_total", "funding_round", "hiring"]
 
-EVASION_PROMPT = """You judge a founder's answer on an investor diligence call. First decide whether the interviewer's line is
+EVASION_PROMPT = """You judge a candidate's answer on a diligence or interview call. First decide whether the interviewer's line is
 a question that asks for specific information (a number, a fact, a name, a yes/no). If not, return is_question=false.
 If it is, judge the answer so far:
 - answered: it gives the information asked for (even if unflattering)
@@ -467,7 +468,7 @@ class ClaimEngine:
                 "when": "earlier in this call" if r["same_call"] else f"on the call of {r['on']}"}
 
     def evasion(self, question: str, answer: str) -> dict:
-        """Did the founder actually answer the interviewer's question?"""
+        """Did the candidate actually answer the interviewer's question?"""
         resp = self.llm.chat.completions.create(
             model=config.OPENAI_FAST_MODEL,
             messages=[{"role": "system", "content": EVASION_PROMPT},

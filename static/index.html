@@ -82,7 +82,7 @@
 <header>
   <h1>Second Chair <span style="font-weight:400;font-size:12px;color:var(--muted)">· live diligence copilot</span></h1>
   <input id="domain" type="text" placeholder="company domain" style="width:190px">
-  <input id="person" type="text" placeholder="founder profile URLs, comma-separated (first = on the call)" style="width:360px">
+  <input id="person" type="text" placeholder="candidate profile URL first, then co-founders (comma-separated)" style="width:360px">
   <button id="prepare" class="primary">Build dossier &amp; start call</button>
   <button id="end" disabled>End call → memo</button>
   <span id="mode" class="pill"></span>
@@ -93,16 +93,16 @@
     <h2>Live call · two channels</h2>
     <div id="transcript" class="scroll"></div>
     <div class="controls">
-      <div class="row"><span class="lbl">Interviewer</span><button id="micA">🎙 Mic</button><input id="textA" type="text" placeholder="type interviewer line, Enter to send"></div>
-      <div class="row"><span class="lbl">Founder</span><button id="micB">🖥 Tab audio</button><input id="textB" type="text" placeholder="type founder line, Enter to send"></div>
-      <div class="row"><span class="lbl">Demo</span><button id="script">▶ Next scripted founder line</button><span id="scriptPos" class="pill"></span></div>
+      <div class="row"><span class="lbl">Interviewer</span><button id="micA">🎙 Mic</button><input id="textA" type="text" placeholder="type interviewer line"><button id="sendA">Send</button></div>
+      <div class="row"><span class="lbl">Candidate</span><button id="micB">🖥 Tab audio</button><input id="textB" type="text" placeholder="type candidate line"><button id="sendB">Send</button></div>
+      <div class="row"><span class="lbl">Demo</span><button id="script">▶ Next scripted candidate line</button><span id="scriptPos" class="pill"></span></div>
     </div>
   </section>
   <section class="panel">
     <h2>Whispers &amp; verified claims</h2>
     <div id="whisper"></div>
     <div id="suggest"><span style="color:var(--muted)">Mentioned on the call, not in the dossier:</span><div id="chips"></div></div>
-    <div id="claims" class="scroll"><em style="color:var(--muted)">Claims the founder makes appear here, checked against Crustdata data in Neo4j.</em></div>
+    <div id="claims" class="scroll"><em style="color:var(--muted)">Claims the candidate makes appear here, checked against Crustdata data in Neo4j.</em></div>
   </section>
   <div class="col" style="grid-template-rows: 1.2fr 1fr;">
     <section class="panel">
@@ -158,7 +158,7 @@ async function openNode(id) {
     $("npTitle").onkeydown = (e) => e.key === "Enter" && $("npSearch").click();
   } else if (n.kind === "person") {
     P.innerHTML = `<h3><span>${esc(n.name)}</span>${close}</h3><div class="src">${esc(n.headline || "")}</div>
-      <div class="row">${n.url ? `<button id="npProfile">Enrich full profile</button>` : ""}<button id="npOverlap">Overlap with founder</button></div>
+      <div class="row">${n.url ? `<button id="npProfile">Enrich full profile</button>` : ""}<button id="npOverlap">Overlap with candidate</button></div>
       <div id="npOverlapBox"></div>
       <div style="margin-top:8px"><b>Find colleagues</b> <span class="src">people who also worked at…</span></div>
       ${n.roles.filter((r) => r.key).map((r, i) => `<div class="res"><span>${esc(r.company)}<small>${esc(r.title)} · ${esc((r.start || "").slice(0, 7))}–${esc((r.end || "now").slice(0, 7))}</small></span><button data-i="${i}">Colleagues</button></div>`).join("")}
@@ -168,7 +168,7 @@ async function openNode(id) {
       const o = await api(`/api/session/${sid}/overlap/${encodeURIComponent(id.slice(2))}`).catch((e) => ({ error: e.message }));
       const list = (label, xs) => `<div><b>${label}:</b> ${xs && xs.length ? esc(xs.join(", ")) : `<span class="src">none</span>`}</div>`;
       $("npOverlapBox").innerHTML = o.error ? `<div class="src">${esc(o.error)}</div>` : `<div class="card" style="margin-top:6px">
-        <div class="src">${esc(o.person)} ↔ ${esc(o.founder)}</div>${list("Same employer, overlapping", o.companies)}${list("GitHub orgs", o.orgs)}${list("Skills", o.skills)}${list("Repo languages", o.languages)}
+        <div class="src">${esc(o.person)} ↔ ${esc(o.candidate)}</div>${list("Same employer, overlapping", o.companies)}${list("GitHub orgs", o.orgs)}${list("Skills", o.skills)}${list("Repo languages", o.languages)}
         <details><summary class="src" style="cursor:pointer">Cypher</summary>${o.cypher.map((q) => `<code>${esc(q.cypher)}</code>`).join("")}</details></div>`;
     };
     const roles = n.roles.filter((r) => r.key);
@@ -237,7 +237,7 @@ function authBadge(v) {
 function addUtterance(u) {
   const d = document.createElement("div");
   d.className = "u " + u.channel;
-  d.innerHTML = `<div class="who">${u.channel === "subject" ? "Founder" : "Interviewer"} · ${esc(u.language)}</div><div>${esc(u.original)}</div>${u.original !== u.text ? `<div class="orig">${esc(u.text)}</div>` : ""}`;
+  d.innerHTML = `<div class="who">${u.channel === "subject" ? "Candidate" : "Interviewer"} · ${esc(u.language)}</div><div>${esc(u.original)}</div>${u.original !== u.text ? `<div class="orig">${esc(u.text)}</div>` : ""}`;
   $("transcript").appendChild(d); $("transcript").scrollTop = 1e9;
 }
 
@@ -322,12 +322,15 @@ function sendText(channel, input, speak) {
   const f = new FormData(); f.append("text", t); if (speak) f.append("speak", "true");
   send(channel, f).catch((e) => ($("status").textContent = "Error: " + e.message));
 }
-$("textA").onkeydown = (e) => e.key === "Enter" && sendText("interviewer", $("textA"));
-$("textB").onkeydown = (e) => e.key === "Enter" && sendText("subject", $("textB"), true);
+// Enter or the Send button. keyup avoids IME/autocomplete swallowing Enter on keydown.
+$("textA").addEventListener("keyup", (e) => { if (e.key === "Enter") sendText("interviewer", $("textA")); });
+$("textB").addEventListener("keyup", (e) => { if (e.key === "Enter") sendText("subject", $("textB"), true); });
+$("sendA").onclick = () => sendText("interviewer", $("textA"));
+$("sendB").onclick = () => sendText("subject", $("textB"), true);
 $("script").onclick = async () => {
   if (!(await ensureCall())) return;
   if (!script.length) { $("status").textContent = "Demo lines are still being written; click again in a moment."; return; }
-  if (scriptIdx >= script.length) { $("status").textContent = "All demo lines played. Type more on the founder line."; return; }
+  if (scriptIdx >= script.length) { $("status").textContent = "All demo lines played. Type more on the candidate line."; return; }
   const f = new FormData(); f.append("text", script[scriptIdx++]); f.append("speak", "true");
   $("scriptPos").textContent = `${scriptIdx}/${script.length}`;
   send("subject", f).catch((e) => ($("status").textContent = "Error: " + e.message));

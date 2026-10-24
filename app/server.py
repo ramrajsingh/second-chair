@@ -60,7 +60,7 @@ def demo_lines(sid: str):
             if not path.exists():
                 path.parent.mkdir(parents=True, exist_ok=True)
                 lines = engine.demo_lines(dossier.summary(db, s["company_key"], s["person_pid"]))
-                path.write_text(json.dumps({"_note": "Founder lines for '▶ Next scripted founder line'. Edit, reorder or add; "
+                path.write_text(json.dumps({"_note": "Candidate lines for '▶ Next scripted candidate line'. Edit, reorder or add; "
                                                      "the next call uses this file.", "lines": lines}, indent=2, ensure_ascii=False))
         s["demo_lines"] = json.loads(path.read_text())["lines"]
         s["demo_file"] = str(path.relative_to(config.ROOT))
@@ -117,7 +117,7 @@ def _new_state(keys: dict, card: dict) -> dict:
                       "people": founder_ids + ([keys["person_pid"]] if keys["person_pid"] else [])},
             "added": [],
             "keyterms": sorted(set(n for n in names if n)),
-            "context": f"Diligence call with {card['person']['person']['name'] if card['person'] else 'a founder'} "
+            "context": f"Diligence call with {card['person']['person']['name'] if card['person'] else 'a candidate'} "
                        f"of {card['company']['name']}."}
 
 
@@ -348,7 +348,7 @@ def overlap(sid: str, pid: str):
     """What connects a person to the founder on the call: overlapping employers, GitHub orgs, skills, languages."""
     s = _session(sid)
     if not s["person_pid"]:
-        raise HTTPException(404, "No founder on this call")
+        raise HTTPException(404, "No candidate on this call")
     log: list = []
     row = db.query("""
         MATCH (a:Person {pid: $a}), (b:Person {pid: $b})
@@ -361,7 +361,7 @@ def overlap(sid: str, pid: str):
         WITH a, b, companies, orgs, collect(DISTINCT k.name) AS skills
         OPTIONAL MATCH (a)-[:HAS_GITHUB]->(:GitHubAccount)-[:OWNS]->(:Repo)-[:WRITTEN_IN]->(l:Language)
                        <-[:WRITTEN_IN]-(:Repo)<-[:OWNS]-(:GitHubAccount)<-[:HAS_GITHUB]-(b)
-        RETURN a.name AS founder, b.name AS person, companies, orgs, skills, collect(DISTINCT l.name) AS languages""",
+        RETURN a.name AS candidate, b.name AS person, companies, orgs, skills, collect(DISTINCT l.name) AS languages""",
                    {"a": s["person_pid"], "b": pid}, log, "overlap: employers, GitHub orgs, skills, languages")
     if not row:
         raise HTTPException(404, "Unknown person")

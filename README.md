@@ -58,13 +58,13 @@ cp .env.example .env        # Neo4j, Sarvam, OpenAI; Crustdata optional
 
 Open http://localhost:8010, enter a **company domain** and the **founders' profile URLs** (comma-separated; the first is the person on the call; leave empty to use the founders Crustdata lists), then click **Build dossier & start call**. Without `CRUSTDATA_API_KEY` it uses `data/sample_dossier.json` (a fictional founder and company).
 
-**Demo on any company:** after the dossier loads, **▶ Next scripted founder line** plays lines generated from that company's real data: some accurate, some inflated. They're saved to `data/scripts/<domain>.json` the first time, so you can edit, reorder or add lines; the next call uses your version. The sample company's lines are in `data/demo_script.json`. You see both verified and contradicted verdicts without a second person on the call.
+**Demo on any company:** after the dossier loads, **▶ Next scripted candidate line** plays lines generated from that company's real data: some accurate, some inflated. They're saved to `data/scripts/<domain>.json` the first time, so you can edit, reorder or add lines; the next call uses your version. The sample company's lines are in `data/demo_script.json`. You see both verified and contradicted verdicts without a second person on the call.
 
 Feed the call in any combination:
 - **🎙 Mic:** the interviewer's microphone.
 - **🖥 Tab audio:** share the video-call tab with "Share tab audio" ticked, for the founder's side.
 - **Typed lines** on either channel.
-- **▶ Next scripted founder line:** demo lines voiced in a male voice.
+- **▶ Next scripted candidate line:** candidate lines voiced in a male voice.
 
 **Evasions and shifting answers:** beyond checking facts, Second Chair watches *how* the founder answers:
 - **Unanswered questions:** each reply to an interviewer question is judged *answered / partly answered / evaded* (run alongside claim spotting, so no extra wait). An evasion becomes `(:Utterance)-[:RAISED]->(:Flag)-[:ABOUT_QUESTION]->(:Utterance)` and the follow-up question is whispered, e.g. *"Not answered: monthly churn. Ask: can you share your exact monthly churn percentage?"*
