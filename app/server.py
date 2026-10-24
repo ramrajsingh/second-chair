@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app import config, dossier
+from app import config, crustdata, dossier
 from app.claims import ClaimEngine, signature
 from app.crustdata import CrustdataError
 from app.neo import GraphError, Neo, setup_schema
@@ -254,7 +254,8 @@ def add_to_dossier(sid: str, req: AddEntity):
     else:
         s["scope"]["people"].append(ent["id"])
         info = {"roles": db.query("""MATCH (:Person {pid: $id})-[w:WORKED_AT]->(c:Company)
-            RETURN c.name AS company, w.title AS title, w.start AS start, w.end AS end ORDER BY w.start DESC LIMIT 6""",
+            RETURN c.key AS key, c.name AS company, w.title AS title, w.start AS start, w.end AS end
+            ORDER BY w.start DESC LIMIT 6""",
                                   {"id": ent["id"]})}
     if ent["name"]:
         s["keyterms"] = sorted(set(s["keyterms"] + [ent["name"]]))
@@ -271,6 +272,67 @@ def add_to_dossier(sid: str, req: AddEntity):
 
 def _speak(wid: str, text: str) -> dict:
     return {"text": text, "audio": voice.speak(text, "en-IN")[0]}
+
+
+@app.get("/api/session/{sid}/node/{node_id:path}")
+def node_detail(sid: str, node_id: str):
+    """What the graph knows about a clicked node, and which actions make sense for it."""
+    if sid not in sessions:
+        raise HTTPException(404, "Unknown session")
+    kind, _, ident = node_id.partition(":")
+    if kind == "co":
+        rows = db.query("""
+            MATCH (c:Company {key: $key})
+            OPTIONAL MATCH (p:Person)-[w:WORKED_AT]->(c)
+            WITH c, collect({name: p.name, title: w.title, start: w.start, end: w.end}) AS people
+            RETURN c.name AS name, c.domain AS domain, c.key AS key, c.headcount AS headcount,
+                   c.total_funding_usd AS funding, c.growth_yoy_pct AS yoy, c.crustdata_id IS NOT NULL AS enriched,
+                   people""", {"key": ident})
+        if not rows:
+            raise HTTPException(404, "Unknown company")
+        return {"kind": "company", **rows[0]}
+    if kind == "p":
+        rows = db.query("""
+            MATCH (p:Person {pid: $pid})
+            OPTIONAL MATCH (p)-[w:WORKED_AT]->(c:Company)
+            WITH p, w, c ORDER BY w.start DESC
+            RETURN p.name AS name, p.headline AS headline, p.profile_url AS url,
+                   collect({key: c.key, company: c.name, domain: c.domain, title: w.title, start: w.start, end: w.end}) AS roles""",
+                        {"pid": ident})
+        if not rows:
+            raise HTTPException(404, "Unknown person")
+        return {"kind": "person", **rows[0]}
+    if kind == "i":
+        return {"kind": "investor", "name": ident}
+    return {"kind": "other"}
+
+
+class PeopleSearch(BaseModel):
+    company_key: str
+    when: str = "any"           # current, past or any
+    title: str | None = None
+    limit: int = 10
+
+
+@app.post("/api/session/{sid}/people_search")
+def people_search(sid: str, req: PeopleSearch):
+    """Crustdata people search scoped to a company in the graph, e.g. former engineering leads,
+    for reference checks or to verify "I worked with X"."""
+    if sid not in sessions:
+        raise HTTPException(404, "Unknown session")
+    co = db.query("MATCH (c:Company {key: $key}) RETURN c.name AS name, c.domain AS domain", {"key": req.company_key})
+    if not co:
+        raise HTTPException(404, "Unknown company")
+    t0 = time.time()
+    try:
+        found = crustdata.search_people(domain=co[0]["domain"], company=co[0]["name"], when=req.when,
+                                        title=(req.title or "").strip() or None, limit=max(1, min(req.limit, 25)))
+    except CrustdataError as e:
+        raise HTTPException(502, str(e))
+    in_graph = {r["pid"] for r in db.query("MATCH (p:Person) WHERE p.pid IN $ids RETURN p.pid AS pid",
+                                           {"ids": [f["pid"] for f in found]})}
+    return {"company": co[0]["name"], "results": [{**f, "in_graph": f["pid"] in in_graph} for f in found],
+            "ms": int((time.time() - t0) * 1000)}
 
 
 def _whisper(cid: str, claim: dict, verdict: dict) -> dict:
@@ -333,7 +395,7 @@ def graph(sid: str):
         else:
             pn = node(f"p:{a['id']}", a["name"] or a["id"], "added_person")
             for r in a.get("roles", []):
-                edges.append({"from": pn, "to": node(f"co:{(r['company'] or '').lower()}", r["company"], "past_company"),
+                edges.append({"from": pn, "to": node(f"co:{r['key']}", r["company"], "past_company"),
                               "label": r["title"] or "WORKED_AT"})
     target = {"headcount": cnode, "growth": cnode, "funding_total": cnode, "hiring": cnode}
     for cl in claims:

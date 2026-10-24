@@ -52,6 +52,15 @@
   .shift { font-size:12px; font-weight:600; color:var(--bad); margin-top:2px; }
   details code { display:block; white-space:pre-wrap; word-break:break-word; font-size:11px; color:var(--muted); margin-top:4px; }
   #graph { flex:1; min-height:280px; }
+  .gwrap { position:relative; flex:1; display:flex; min-height:0; }
+  #nodePanel { position:absolute; top:8px; right:8px; width:min(330px, 92%); max-height:calc(100% - 16px); overflow-y:auto;
+               background:var(--panel); border:1px solid var(--line); border-radius:10px; box-shadow:0 8px 30px #0004; padding:10px 12px; display:none; font-size:13px; z-index:3; }
+  #nodePanel h3 { margin:0 0 4px; font-size:14px; display:flex; justify-content:space-between; gap:8px; }
+  #nodePanel .row { margin-top:6px; flex-wrap:wrap; }
+  #nodePanel select, #nodePanel input { font:inherit; color:inherit; background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:4px 6px; }
+  #nodePanel .res { display:flex; justify-content:space-between; gap:6px; align-items:center; padding:5px 0; border-bottom:1px solid var(--line); }
+  #nodePanel .res small { display:block; color:var(--muted); }
+  #nodePanel button { padding:4px 9px; font-size:12px; }
   #dossier table { width:100%; border-collapse:collapse; font-size:13px; }
   #dossier td { padding:3px 4px; border-bottom:1px solid var(--line); vertical-align:top; }
   #dossier .k { color:var(--muted); width:38%; }
@@ -98,7 +107,7 @@
   <div class="col" style="grid-template-rows: 1.2fr 1fr;">
     <section class="panel">
       <h2>Dossier graph (Neo4j)</h2>
-      <div id="graph"></div>
+      <div class="gwrap"><div id="graph"></div><div id="nodePanel"></div></div>
       <div class="legend"><span style="--c:#2563eb">Company</span><span style="--c:#7c3aed">Person</span><span style="--c:#64748b">Past company</span><span style="--c:#0891b2">Round</span><span style="--c:#d97706">Investor</span><span style="--c:#db2777">Added on call</span><span style="--c:#16a34a">Verified</span><span style="--c:#dc2626">Contradicted</span></div>
     </section>
     <section class="panel">
@@ -117,11 +126,67 @@ let sid = null, script = [], scriptIdx = 0, queue = [], player = new Audio(), cl
 const COLORS = { company:"#2563eb", person:"#7c3aed", past_company:"#64748b", round:"#0891b2", investor:"#d97706",
                  added_company:"#db2777", added_person:"#db2777", claim_verified:"#16a34a", claim_contradicted:"#dc2626", claim_unverifiable:"#ca8a04" };
 const nodes = new vis.DataSet(), edges = new vis.DataSet();
-new vis.Network($("graph"), { nodes, edges }, {
+const network = new vis.Network($("graph"), { nodes, edges }, {
   nodes: { shape:"dot", size:13, font:{ size:11, color:getComputedStyle(document.body).color, multi:false } },
   edges: { arrows:"to", font:{ size:9, color:"#888", strokeWidth:0, align:"middle" }, color:{ color:"#9ca3af" }, smooth:{ type:"continuous" } },
   physics: { stabilization:{ iterations:120 }, barnesHut:{ springLength:110 } },
 });
+// Click a company, person or investor to enrich it or search Crustdata for related people.
+network.on("click", (e) => { if (e.nodes.length && sid) openNode(e.nodes[0]); else $("nodePanel").style.display = "none"; });
+
+async function openNode(id) {
+  if (!/^(co|p|i):/.test(id)) { $("nodePanel").style.display = "none"; return; }
+  const P = $("nodePanel");
+  P.style.display = "block"; P.innerHTML = "Loading…";
+  const n = await api(`/api/session/${sid}/node/${encodeURIComponent(id)}`).catch((e) => ({ kind: "error", name: e.message }));
+  const close = `<button onclick="document.getElementById('nodePanel').style.display='none'">✕</button>`;
+  if (n.kind === "company") {
+    const people = n.people.filter((p) => p.name);
+    P.innerHTML = `<h3><span>${esc(n.name)}</span>${close}</h3>
+      <div class="src">${esc(n.domain || n.key)}</div>
+      ${n.enriched ? `<div>${n.headcount ?? "?"} people${n.yoy != null ? ` (${n.yoy > 0 ? "+" : ""}${Math.round(n.yoy)}% YoY)` : ""} · raised ${n.funding ? "$" + (n.funding / 1e6).toFixed(1) + "M" : "?"}</div>`
+                   : `<div class="row"><span class="src">Only known from someone's work history.</span><button id="npEnrich">Enrich company</button></div>`}
+      ${people.length ? `<div class="src" style="margin-top:6px">In graph: ${people.map((p) => esc(p.name) + " (" + esc(p.title) + ")").join(", ")}</div>` : ""}
+      <div style="margin-top:8px"><b>Find people</b> <span class="src">Crustdata people search</span></div>
+      <div class="row"><input id="npTitle" placeholder="title, e.g. VP Engineering" style="flex:1;min-width:120px">
+        <select id="npWhen"><option value="any">current + former</option><option value="current">current</option><option value="past">former</option></select>
+        <button id="npSearch">Search</button></div>
+      <div id="npResults"></div>`;
+    if ($("npEnrich")) $("npEnrich").onclick = async () => { await addEntity(n.domain || n.name); openNode(id); };
+    $("npSearch").onclick = () => searchPeople(n.key, $("npTitle").value, $("npWhen").value);
+    $("npTitle").onkeydown = (e) => e.key === "Enter" && $("npSearch").click();
+  } else if (n.kind === "person") {
+    P.innerHTML = `<h3><span>${esc(n.name)}</span>${close}</h3><div class="src">${esc(n.headline || "")}</div>
+      ${n.url ? `<div class="row"><button id="npProfile">Enrich full profile</button></div>` : ""}
+      <div style="margin-top:8px"><b>Find colleagues</b> <span class="src">people who also worked at…</span></div>
+      ${n.roles.filter((r) => r.key).map((r, i) => `<div class="res"><span>${esc(r.company)}<small>${esc(r.title)} · ${esc((r.start || "").slice(0, 7))}–${esc((r.end || "now").slice(0, 7))}</small></span><button data-i="${i}">Colleagues</button></div>`).join("")}
+      <div id="npResults"></div>`;
+    if ($("npProfile")) $("npProfile").onclick = () => addEntity(n.url);
+    const roles = n.roles.filter((r) => r.key);
+    P.querySelectorAll("button[data-i]").forEach((b) => (b.onclick = () => searchPeople(roles[+b.dataset.i].key, "", "any")));
+  } else if (n.kind === "investor") {
+    P.innerHTML = `<h3><span>${esc(n.name)}</span>${close}</h3><div class="src">Investor</div>
+      <div class="row"><button id="npInv">Enrich as company</button></div>`;
+    $("npInv").onclick = () => addEntity(n.name);
+  } else { P.innerHTML = `<h3><span>${esc(n.name || "")}</span>${close}</h3>`; }
+}
+
+async function searchPeople(companyKey, title, when) {
+  const box = $("npResults");
+  box.innerHTML = `<div class="src" style="margin-top:6px">Searching Crustdata…</div>`;
+  try {
+    const r = await api(`/api/session/${sid}/people_search`, { method:"POST", headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ company_key: companyKey, title, when, limit: 10 }) });
+    box.innerHTML = `<div class="src" style="margin-top:6px">${r.results.length} at ${esc(r.company)} · ${r.ms} ms</div>` +
+      r.results.map((p, i) => `<div class="res"><span>${esc(p.name)}<small>${esc(p.headline || "")}</small></span>${p.in_graph ? `<span class="tag">in graph</span>` : p.url ? `<button data-r="${i}">Add</button>` : ""}</div>`).join("");
+    box.querySelectorAll("button[data-r]").forEach((b) => (b.onclick = async () => {
+      b.disabled = true; b.textContent = "Adding…";
+      await addEntity(r.results[+b.dataset.r].url);
+      b.replaceWith(Object.assign(document.createElement("span"), { className: "tag", textContent: "added" }));
+    }));
+  } catch (e) { box.innerHTML = `<div class="src">Search failed: ${esc(e.message)}</div>`; }
+}
+
 function setGraph(g) {
   for (const n of g.nodes) nodes.update({ id:n.id, label:n.label, color:COLORS[n.kind] || "#64748b", size:n.kind === "company" ? 20 : n.kind.startsWith("claim") ? 10 : 13, shape:n.kind.startsWith("claim") ? "box" : "dot", font:n.kind.startsWith("claim") ? { color:"#fff", size:10 } : undefined });
   edges.clear(); edges.add(g.edges.map((e, i) => ({ id:i, ...e, color:{ color: e.label === "CONTRADICTED" ? "#dc2626" : e.label === "VERIFIED" ? "#16a34a" : "#9ca3af" } })));
