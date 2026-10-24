@@ -1,0 +1,8 @@
+openai
+sarvamai
+neo4j
+fastapi
+uvicorn[standard]
+python-multipart
+httpx
+python-dotenv

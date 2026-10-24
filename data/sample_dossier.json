@@ -1,0 +1,103 @@
+{
+  "_note": "Fictional founder and company for offline testing, shaped like Crustdata /company/enrich and /person/enrich responses.",
+  "company": [
+    {
+      "matched_on": "nimbusfreight.example",
+      "match_type": "domain",
+      "matches": [
+        {
+          "confidence_score": 1.0,
+          "company_data": {
+            "crustdata_company_id": 900001,
+            "basic_info": {
+              "name": "Nimbus Freight",
+              "primary_domain": "nimbusfreight.example",
+              "description": "Digital freight brokerage for Indian mid-market shippers.",
+              "year_founded": 2021,
+              "headquarters": "Bengaluru, India"
+            },
+            "headcount": {
+              "total": 84,
+              "growth_percent": {"mom": -2.3, "qoq": -8.7, "six_months": -16.0, "yoy": -12.5, "two_years": 40.0},
+              "timeseries": [
+                {"date": "2024-09-01", "employee_count": 60},
+                {"date": "2025-01-01", "employee_count": 78},
+                {"date": "2025-05-01", "employee_count": 95},
+                {"date": "2025-09-01", "employee_count": 96},
+                {"date": "2025-11-01", "employee_count": 112},
+                {"date": "2026-03-01", "employee_count": 100},
+                {"date": "2026-06-01", "employee_count": 92},
+                {"date": "2026-09-01", "employee_count": 84}
+              ]
+            },
+            "funding": {
+              "total_investment_usd": 14500000,
+              "last_round_amount_usd": 12000000,
+              "last_fundraise_date": "2024-05-14",
+              "last_round_type": "series_a",
+              "milestones": [
+                {"date": "2022-02-10", "amount_usd": 2500000, "round_type": "seed", "investors": ["Banyan Seed Fund", "Monsoon Angels"], "lead_investors": ["Banyan Seed Fund"]},
+                {"date": "2024-05-14", "amount_usd": 12000000, "round_type": "series_a", "investors": ["Peak Harbor Capital", "Banyan Seed Fund"], "lead_investors": ["Peak Harbor Capital"]}
+              ],
+              "investors": ["Banyan Seed Fund", "Monsoon Angels", "Peak Harbor Capital"]
+            },
+            "hiring": {"openings_count": 3, "recent_titles": ["Sales Manager", "Backend Engineer", "Account Executive"]},
+            "people": {
+              "founders": [
+                {
+                  "crustdata_person_id": 700001,
+                  "basic_profile": {"name": "Arjun Mehta", "headline": "Founder & CEO at Nimbus Freight", "current_title": "Founder & CEO"},
+                  "professional_network": {"profile_url": "https://www.linkedin.com/in/arjun-mehta-nimbus-demo"},
+                  "experience": {"employment_details": {
+                    "current": [{"name": "Nimbus Freight", "company_website_domain": "nimbusfreight.example", "title": "Founder & CEO", "start_date": "2021-08-01", "end_date": null}],
+                    "past": [
+                      {"name": "Flipkart", "company_website_domain": "flipkart.com", "title": "Senior Engineering Manager", "start_date": "2018-03-01", "end_date": "2021-06-30"},
+                      {"name": "Delhivery", "company_website_domain": "delhivery.com", "title": "Software Engineer", "start_date": "2014-07-01", "end_date": "2018-02-28"}
+                    ]
+                  }}
+                },
+                {
+                  "crustdata_person_id": 700002,
+                  "basic_profile": {"name": "Kavya Iyer", "headline": "Co-founder & CTO at Nimbus Freight", "current_title": "Co-founder & CTO"},
+                  "professional_network": {"profile_url": "https://www.linkedin.com/in/kavya-iyer-nimbus-demo"},
+                  "experience": {"employment_details": {
+                    "current": [{"name": "Nimbus Freight", "company_website_domain": "nimbusfreight.example", "title": "Co-founder & CTO", "start_date": "2021-08-01", "end_date": null}],
+                    "past": [
+                      {"name": "Flipkart", "company_website_domain": "flipkart.com", "title": "Principal Engineer", "start_date": "2017-01-01", "end_date": "2021-05-31"}
+                    ]
+                  }}
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "person": [
+    {
+      "matched_on": "https://www.linkedin.com/in/arjun-mehta-nimbus-demo",
+      "match_type": "professional_network_profile_url",
+      "match_status": "matched",
+      "matches": [
+        {
+          "confidence_score": 1.0,
+          "person_data": {
+            "crustdata_person_id": 700001,
+            "basic_profile": {"name": "Arjun Mehta", "headline": "Founder & CEO at Nimbus Freight", "current_title": "Founder & CEO"},
+            "professional_network": {"profile_url": "https://www.linkedin.com/in/arjun-mehta-nimbus-demo"},
+            "experience": {"employment_details": {
+              "current": [{"name": "Nimbus Freight", "company_website_domain": "nimbusfreight.example", "title": "Founder & CEO", "start_date": "2021-08-01", "end_date": null, "seniority_level": "Owner"}],
+              "past": [
+                {"name": "Flipkart", "company_website_domain": "flipkart.com", "title": "Senior Engineering Manager", "start_date": "2018-03-01", "end_date": "2021-06-30", "seniority_level": "Manager"},
+                {"name": "Delhivery", "company_website_domain": "delhivery.com", "title": "Software Engineer", "start_date": "2014-07-01", "end_date": "2018-02-28", "seniority_level": "Entry"}
+              ]
+            }},
+            "education": {"schools": [{"school": "IIT Madras", "degree": "B.Tech", "field_of_study": "Computer Science", "start_year": 2010, "end_year": 2014}]},
+            "skills": {"professional_network_skills": ["Logistics", "Distributed Systems", "Team Leadership"]}
+          }
+        }
+      ]
+    }
+  ]
+}
