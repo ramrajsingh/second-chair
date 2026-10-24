@@ -51,9 +51,11 @@ def _first_match(resp: list, data_key: str) -> dict | None:
     return None
 
 
-def enrich_company(domain: str) -> dict | None:
-    """Firmographics, headcount timeseries, funding rounds, hiring and founders' profiles."""
-    return _first_match(_cached("company", {"domains": [domain], "fields": COMPANY_FIELDS}), "company_data")
+def enrich_company(domain: str | None = None, name: str | None = None) -> dict | None:
+    """Firmographics, headcount timeseries, funding rounds, hiring and founders' profiles,
+    looked up by domain or, for a company mentioned on a call, by name."""
+    body = {"domains": [domain]} if domain else {"names": [name]}
+    return _first_match(_cached("company", {**body, "fields": COMPANY_FIELDS}), "company_data")
 
 
 def enrich_people(profile_urls: list[str]) -> list[dict]:

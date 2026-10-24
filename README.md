@@ -22,6 +22,7 @@ before the call: Crustdata person + company enrichment ─► Neo4j        after
 (:Company)-[:HEADCOUNT]->(:HeadcountPoint {date, count})
 (:Company)-[:RAISED]->(:FundingRound {date, amount_usd, round_type})<-[:INVESTED_IN {lead}]-(:Investor)
 (:Session)-[:ABOUT]->(:Person | :Company)
+(:Session)-[:ADDED]->(:Person | :Company)          // added mid-call
 (:Session)-[:HAS_UTTERANCE]->(:Utterance {speaker, text, original, language})-[:MADE_CLAIM]->(:Claim {status, finding, evidence, cypher})
 ```
 
@@ -56,6 +57,8 @@ Feed the call in any combination:
 - **🖥 Tab audio:** share the video-call tab with "Share tab audio" ticked, for the founder's side.
 - **Typed lines** on either channel.
 - **▶ Next scripted founder line:** demo lines voiced in a male voice.
+
+**Grow the dossier mid-call:** when the founder names a company or person that isn't in the dossier (a competitor, past employer, advisor), a **➕ chip** suggests adding it, or you can type a domain, company name or profile URL into **Add**. It's enriched from Crustdata, linked to the call (`(:Session)-[:ADDED]->`), and becomes checkable: "Apollo only has 100 people" is checked against Apollo's own headcount, and claims made before you added it are re-checked automatically.
 
 **End call → memo** writes the cited memo and saves it to the session.
 

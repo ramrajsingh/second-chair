@@ -95,7 +95,14 @@ def prepare(req: Prepare):
         RETURN claim, finding, toString(date(last)) AS call_date ORDER BY last DESC LIMIT 5""", {"sid": sid, "pid": keys["person_pid"], "ckey": keys["company_key"]})
     names = [card["company"]["name"]] + [f["name"] for f in card["founders"]] + \
             [i.split(" (")[0] for r in card["rounds"] for i in r["investors"]]
-    sessions[sid] = {**keys, "seq": 0, "recent": [], "seen": set(), "keyterms": sorted(set(n for n in names if n)),
+    founder_ids = [r["pid"] for r in db.query(
+        "MATCH (p:Person)-[:FOUNDED]->(:Company {key: $ckey}) RETURN p.pid AS pid", {"ckey": keys["company_key"]})]
+    sessions[sid] = {**keys, "seq": 0, "recent": [], "seen": set(), "suggested": set(),
+                     # Everything this call's claims can be checked against; grows as entities are added.
+                     "scope": {"companies": {keys["company_key"]: card["company"]["name"]},
+                               "people": founder_ids + ([keys["person_pid"]] if keys["person_pid"] else [])},
+                     "added": [],
+                     "keyterms": sorted(set(n for n in names if n)),
                      "context": f"Diligence call with {card['person']['person']['name'] if card['person'] else 'a founder'} "
                                 f"of {card['company']['name']}."}
     return {"session_id": sid, "dossier": card, "open_items": open_items, "graph": graph(sid)["graph"],
@@ -142,7 +149,8 @@ def utterance(sid: str, channel: str = Form(...), audio: UploadFile | None = Fil
     if channel == "subject":
         t = time.time()
         claims = []
-        for c in engine.extract(heard.english, context):
+        extracted = engine.extract(heard.english, context)
+        for c in extracted["claims"]:
             if c["type"] == "funding_round" and c["number"] is None and not c["investor"] and not c["round_type"]:
                 continue  # a round mentioned with nothing checkable
             if signature(c) not in s["seen"]:  # a claim repeated later in the call is checked once
@@ -151,23 +159,86 @@ def utterance(sid: str, channel: str = Form(...), audio: UploadFile | None = Fil
         timing["extract"] = int((time.time() - t) * 1000)
         t = time.time()
 
-        def check(c):
-            cypher: list = []
-            verdict = engine.verify(c, s["company_key"], s["person_pid"], cypher)
-            cid = engine.record(sid, uid, c, verdict, None, cypher)
-            if verdict["status"] == "contradicted":
-                # The card goes back now; the spoken whisper is prepared in the background
-                # and fetched by the page from /whisper/{cid}.
-                s.setdefault("whispers", {})[cid] = POOL.submit(_whisper, cid, c, verdict)
-            return {"id": cid, **c, **verdict, "whisper_pending": verdict["status"] == "contradicted",
-                    "cypher": cypher}
-
-        results = list(POOL.map(check, claims))
+        results = list(POOL.map(lambda c: _check_claim(s, sid, uid, c), claims))
         timing["verify"] = int((time.time() - t) * 1000)
+        suggestions = _suggestions(s, extracted["mentions"])
+    else:
+        suggestions = []
     return {"utterance": {"id": uid, "channel": channel, "text": heard.english, "original": heard.original,
                           "language": heard.language},
-            "claims": results, "subject_audio": subject_audio.result() if subject_audio else [],
+            "claims": results, "suggestions": suggestions, "subject_audio": subject_audio.result() if subject_audio else [],
             "timing_ms": timing}
+
+
+def _check_claim(s: dict, sid: str, uid: str, c: dict) -> dict:
+    cypher: list = []
+    verdict = engine.verify(c, s["company_key"], s["person_pid"], cypher, s["scope"])
+    cid = engine.record(sid, uid, c, verdict, None, cypher)
+    if verdict["status"] == "contradicted":
+        # The card goes back now; the spoken whisper is prepared in the background
+        # and fetched by the page from /whisper/{cid}.
+        s.setdefault("whispers", {})[cid] = POOL.submit(_whisper, cid, c, verdict)
+    elif verdict["status"] == "unverifiable" and verdict.get("target") is None and c["company"]:
+        s.setdefault("pending", []).append((uid, c))  # re-checked when that company is added
+    return {"id": cid, **c, **verdict, "whisper_pending": verdict["status"] == "contradicted", "cypher": cypher}
+
+
+def _known(s: dict, name: str) -> bool:
+    n = name.lower()
+    names = [v for v in s["scope"]["companies"].values()] + [a["name"] for a in s["added"]] + s["keyterms"]
+    return any(x and (n in x.lower() or x.lower() in n) for x in names)
+
+
+def _suggestions(s: dict, mentions: list[dict]) -> list[dict]:
+    """Companies and people the founder named that aren't in the dossier yet, offered once each."""
+    out = []
+    for m in mentions:
+        key = (m["kind"], m["name"].lower())
+        if m["name"].strip() and key not in s["suggested"] and not _known(s, m["name"]):
+            s["suggested"].add(key)
+            out.append(m)
+    return out
+
+
+class AddEntity(BaseModel):
+    value: str  # company domain, company name, or person profile URL
+
+
+@app.post("/api/session/{sid}/dossier/add")
+def add_to_dossier(sid: str, req: AddEntity):
+    """Enrich a company or person mentioned on the call and add it to this call's dossier."""
+    s = sessions.get(sid)
+    if not s:
+        raise HTTPException(404, "Unknown session")
+    t0 = time.time()
+    try:
+        ent = dossier.add_entity(db, req.value)
+    except (CrustdataError, GraphError, ValueError) as e:
+        raise HTTPException(502, str(e))
+    label = "Company" if ent["kind"] == "company" else "Person"
+    match = "{key: $id}" if ent["kind"] == "company" else "{pid: $id}"
+    db.query(f"MATCH (s:Session {{id: $sid}}), (e:{label} {match}) MERGE (s)-[r:ADDED]->(e) SET r.at = datetime()",
+             {"sid": sid, "id": ent["id"]})
+    if ent["kind"] == "company":
+        s["scope"]["companies"][ent["id"]] = ent["name"]
+        info = db.query("MATCH (c:Company {key: $id}) RETURN c.headcount AS headcount, c.total_funding_usd AS funding,"
+                        " c.growth_yoy_pct AS yoy", {"id": ent["id"]})[0]
+    else:
+        s["scope"]["people"].append(ent["id"])
+        info = {"roles": db.query("""MATCH (:Person {pid: $id})-[w:WORKED_AT]->(c:Company)
+            RETURN c.name AS company, w.title AS title, w.start AS start, w.end AS end ORDER BY w.start DESC LIMIT 6""",
+                                  {"id": ent["id"]})}
+    if ent["name"]:
+        s["keyterms"] = sorted(set(s["keyterms"] + [ent["name"]]))
+    entry = {**ent, **info}
+    s["added"].append(entry)
+    # Claims made before this company was in the dossier get checked now.
+    ready = [(uid, c) for uid, c in s.get("pending", [])
+             if ent["kind"] == "company" and engine._resolve_company(c["company"], {ent["id"]: ent["name"]})]
+    s["pending"] = [p for p in s.get("pending", []) if p not in ready]
+    rechecked = list(POOL.map(lambda p: _check_claim(s, sid, p[0], p[1]), ready))
+    return {"added": entry, "rechecked": rechecked, "graph": graph(sid)["graph"],
+            "ms": int((time.time() - t0) * 1000)}
 
 
 def _whisper(cid: str, claim: dict, verdict: dict) -> dict:
@@ -200,7 +271,8 @@ def graph(sid: str):
                collect(DISTINCT [r, i, inv.lead]) AS funding""", {"ckey": s["company_key"]})[0]
     claims = db.query("""
         MATCH (:Session {id: $sid})-[:HAS_UTTERANCE]->(:Utterance)-[:MADE_CLAIM]->(cl:Claim)
-        RETURN cl.id AS id, cl.statement AS statement, cl.status AS status, cl.type AS type""", {"sid": sid})
+        RETURN cl.id AS id, cl.statement AS statement, cl.status AS status, cl.type AS type,
+               cl.target AS target""", {"sid": sid})
     nodes, edges = {}, []
 
     def node(nid, label, kind, extra=None):
@@ -223,10 +295,19 @@ def graph(sid: str):
             if i:
                 edges.append({"from": node(f"i:{i['name']}", i["name"], "investor"), "to": rn,
                               "label": "LED" if lead else "INVESTED"})
+    for a in s["added"]:
+        if a["kind"] == "company":
+            node(f"co:{a['id']}", f"{a['name']}\n{a.get('headcount') or '?'} people", "added_company")
+        else:
+            pn = node(f"p:{a['id']}", a["name"] or a["id"], "added_person")
+            for r in a.get("roles", []):
+                edges.append({"from": pn, "to": node(f"co:{(r['company'] or '').lower()}", r["company"], "past_company"),
+                              "label": r["title"] or "WORKED_AT"})
     target = {"headcount": cnode, "growth": cnode, "funding_total": cnode, "hiring": cnode}
     for cl in claims:
         cn = node(f"cl:{cl['id']}", cl["statement"][:40], f"claim_{cl['status']}")
-        anchor = target.get(cl["type"]) or (f"p:{s['person_pid']}" if s["person_pid"] else cnode)
+        anchor = (f"co:{cl['target']}" if cl.get("target") and cl["target"] != co["key"] and cl["type"] in target
+                  else target.get(cl["type"])) or (f"p:{s['person_pid']}" if s["person_pid"] else cnode)
         edges.append({"from": cn, "to": anchor, "label": cl["status"].upper(), "dashes": True})
     return {"graph": {"nodes": list(nodes.values()), "edges": edges}}
 

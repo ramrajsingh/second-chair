@@ -10,6 +10,8 @@ Everything is fetched before the call, so live claim checks only read the graph 
 the hot path).
 """
 
+import re
+
 from app import crustdata
 from app.neo import Neo, company_key
 
@@ -60,7 +62,9 @@ def load_person(db: Neo, profile: dict, founded_key: str | None = None) -> str:
         SET p.name = $name, p.headline = $headline, p.current_title = $title, p.profile_url = $url,
             p.skills = $skills""", {
         "pid": pid, "name": basic.get("name"), "headline": basic.get("headline"),
-        "title": basic.get("current_title"), "url": (profile.get("professional_network") or {}).get("profile_url"),
+        "title": basic.get("current_title"),
+        "url": (profile.get("professional_network") or {}).get("profile_url")
+               or ((profile.get("social_handles") or {}).get("professional_network_identifier") or {}).get("profile_url"),
         "skills": ((profile.get("skills") or {}).get("professional_network_skills") or [])})
     for j in _jobs(profile):
         db.query("""
@@ -140,6 +144,26 @@ def build(db: Neo, company_domain: str, founder_urls: list[str] | None = None) -
         founders = (company.get("people") or {}).get("founders") or []
         pids = [_person_id(f) for f in founders]
     return {"company_key": ckey, "person_pid": pids[0] if pids else None}
+
+
+def add_entity(db: Neo, value: str) -> dict:
+    """Enrich something mentioned on the call and load it into the graph.
+    A profile URL adds a person; a domain or URL adds a company; anything else is a company name."""
+    v = value.strip()
+    if not crustdata.config.CRUSTDATA_API_KEY:
+        raise ValueError("Adding to the dossier needs CRUSTDATA_API_KEY; sample mode has one fictional company.")
+    if "linkedin.com/in/" in v:
+        people = crustdata.enrich_people([v])
+        if not people:
+            raise ValueError(f"Crustdata has no profile for {v}")
+        pid = load_person(db, people[0])
+        return {"kind": "person", "id": pid, "name": (people[0].get("basic_profile") or {}).get("name")}
+    is_domain = bool(re.match(r"^(https?://)?[\w-]+(\.[\w-]+)+(/.*)?$", v)) and " " not in v
+    data = crustdata.enrich_company(domain=_domain(v)) if is_domain else crustdata.enrich_company(name=v)
+    if not data:
+        raise ValueError(f"Crustdata has no company for {v!r}")
+    ckey = load_company(db, data)
+    return {"kind": "company", "id": ckey, "name": (data.get("basic_info") or {}).get("name")}
 
 
 def summary(db: Neo, ckey: str, pid: str | None) -> dict:

@@ -30,6 +30,11 @@ checked against company and people data. Only extract concrete, checkable claims
 - investor: a named backer ("Peak Harbor led our A") -> investor
 - hiring: hiring activity ("we're hiring 30 engineers") -> number of open roles
 - shared_history: worked with someone before ("my co-founder and I worked together at Flipkart") -> person, company
+Company-level claims (headcount, growth, funding, investor, hiring) can be about another company the speaker
+names, such as a competitor ("Shiprocket only has 50 people"); put that company in `company`, otherwise leave
+`company` null for claims about the speaker's own company.
+Also list in `mentions` every other company or person the speaker names (competitors, customers, past employers,
+advisors, investors, colleagues), except the speaker and their own company.
 Extract claims ONLY from the Utterance. The context is only for resolving references like "we", "she" or
 "the company"; never re-extract claims that appear in the context.
 Ignore opinions, plans and vague statements. Return an empty list if there are no checkable claims.
@@ -56,9 +61,13 @@ CLAIM_SCHEMA = {
                      "end_year", "round_type", "investor", "person"],
         "additionalProperties": False,
     }}},
-    "required": ["claims"],
+    "required": ["claims", "mentions"],
     "additionalProperties": False,
 }
+CLAIM_SCHEMA["properties"]["mentions"] = {"type": "array", "items": {
+    "type": "object",
+    "properties": {"name": {"type": "string"}, "kind": {"type": "string", "enum": ["company", "person"]}},
+    "required": ["name", "kind"], "additionalProperties": False}}
 
 WHISPER_PROMPT = """You whisper into an interviewer's ear during a live diligence call. Given a claim the subject just
 made and the contradicting data, write ONE sentence of at most 25 words: what the data shows, then a sharp follow-up
@@ -76,6 +85,8 @@ MEMO_PROMPT = """Write a concise diligence memo in Markdown from the call record
 Claims checked (a table: claim, verdict, evidence with source), Red flags, Questions for the next call. Every factual
 statement must cite its source as [Crustdata: <field>] or [Call: <speaker quote>]. No speculation beyond the data."""
 
+COMPANY_LEVEL = {"headcount", "growth", "funding_total", "funding_round", "investor", "hiring"}
+
 SENIORITY = [("intern", 0), ("engineer", 1), ("developer", 1), ("analyst", 1), ("senior", 2), ("lead", 3),
              ("principal", 3), ("staff", 3), ("manager", 3), ("head", 4), ("director", 5), ("vp", 6),
              ("vice president", 6), ("chief", 7), ("cto", 7), ("ceo", 7), ("coo", 7), ("founder", 7)]
@@ -91,8 +102,9 @@ def signature(c: dict) -> tuple:
     norm = lambda v: " ".join(str(v).lower().split()) if v is not None else None
     t = "investor" if c["type"] == "funding_round" and c["number"] is None and c["investor"] else c["type"]
     if t in ("headcount", "growth", "funding_total", "hiring"):
-        # Same type with a different number is a new claim ("47 people" then "over 90 people").
-        return (t, round(c["number"], -1 if t == "headcount" else 0) if c["number"] is not None else None)
+        # Same type with a different number, or about another company, is a new claim.
+        return (t, norm(c["company"]),
+                round(c["number"], -1 if t == "headcount" else 0) if c["number"] is not None else None)
     return (t, norm(c["company"]), norm(c["investor"]), norm(c["round_type"]), norm(c["person"]))
 
 
@@ -108,23 +120,44 @@ class ClaimEngine:
         self.llm = OpenAI(api_key=config.OPENAI_API_KEY or None)
 
     # --- Extraction ------------------------------------------------------
-    def extract(self, text: str, context: str) -> list[dict]:
+    def extract(self, text: str, context: str) -> dict:
+        """Returns {"claims": [...], "mentions": [{"name", "kind"}]}."""
         resp = self.llm.chat.completions.create(
             model=config.OPENAI_FAST_MODEL,
             messages=[{"role": "system", "content": EXTRACT_PROMPT},
                       {"role": "user", "content": f"Context: {context}\nUtterance: {text}"}],
             response_format={"type": "json_schema", "json_schema": {"name": "claims", "strict": True,
                                                                     "schema": CLAIM_SCHEMA}})
-        return json.loads(resp.choices[0].message.content or "{}").get("claims", [])
+        out = json.loads(resp.choices[0].message.content or "{}")
+        return {"claims": out.get("claims", []), "mentions": out.get("mentions", [])}
 
     # --- Verification: each claim type is one Cypher read on the dossier ----
-    def verify(self, c: dict, ckey: str, pid: str | None, log: list) -> dict:
+    def verify(self, c: dict, ckey: str, pid: str | None, log: list, scope: dict | None = None) -> dict:
+        """scope: companies {key: name} and people [pid] in this call's dossier, including ones added mid-call."""
+        scope = scope or {"companies": {}, "people": []}
         if c["type"] == "funding_round" and c["number"] is None and c["investor"]:
             c = {**c, "type": "investor"}  # "X led our Series A" names a backer, not an amount
+        target = ckey
+        if c["type"] in COMPANY_LEVEL and c["company"]:
+            named = self._resolve_company(c["company"], scope["companies"])
+            if named is None:
+                return {"status": "unverifiable", "target": None, "evidence": [],
+                        "finding": f"{c['company']} isn't in the dossier yet; add it to check this claim."}
+            target = named
         fn = getattr(self, f"_check_{c['type']}", None)
         if not fn:
-            return {"status": "unverifiable", "finding": "No data source for this claim type.", "evidence": []}
-        return fn(c, ckey, pid, log)
+            return {"status": "unverifiable", "finding": "No data source for this claim type.", "evidence": [],
+                    "target": target}
+        return {**fn({**c, "_people": scope["people"]}, target, pid, log), "target": target}
+
+    @staticmethod
+    def _resolve_company(name: str, companies: dict) -> str | None:
+        n = re.sub(r"\s*\(.*?\)", "", name).strip().lower()
+        for key, cname in companies.items():
+            c = re.sub(r"\s*\(.*?\)", "", cname or "").strip().lower()
+            if n and c and (n in c or c in n or n == key):
+                return key
+        return None
 
     def _check_headcount(self, c, ckey, pid, log):
         rows = self.db.query("""
@@ -255,13 +288,15 @@ class ClaimEngine:
     def _check_shared_history(self, c, ckey, pid, log):
         # Multi-hop: subject and another founder at the same company with overlapping dates.
         rows = self.db.query("""
-            MATCH (p:Person {pid: $pid})-[a:WORKED_AT]->(co:Company)<-[b:WORKED_AT]-(o:Person)-[:FOUNDED]->(:Company {key: $ckey})
+            MATCH (p:Person {pid: $pid})-[a:WORKED_AT]->(co:Company)<-[b:WORKED_AT]-(o:Person)
             WHERE o <> p AND co.key <> $ckey  // before this company, not at it
+              AND (o.pid IN $people OR (o)-[:FOUNDED]->(:Company {key: $ckey}))  // co-founders or people added to the dossier
               AND ($company IS NULL OR toLower(co.name) CONTAINS toLower($company))
               AND ($person IS NULL OR toLower(o.name) CONTAINS toLower($person) OR $person =~ '(?i).*(co-?founder|cto|ceo).*')
               AND a.start <= coalesce(b.end, '9999') AND b.start <= coalesce(a.end, '9999')
             RETURN o.name AS other, co.name AS company, a.start AS a_start, a.end AS a_end, b.start AS b_start, b.end AS b_end""",
-                             {"pid": pid, "ckey": ckey, "company": c["company"], "person": c["person"]},
+                             {"pid": pid, "ckey": ckey, "company": c["company"], "person": c["person"],
+                              "people": c.get("_people", [])},
                              log, "shared history: overlapping tenure (multi-hop)")
         if rows:
             r = rows[0]
@@ -289,7 +324,7 @@ class ClaimEngine:
             MATCH (u:Utterance {id: $uid})
             CREATE (u)-[:MADE_CLAIM]->(c:Claim {id: $cid, session: $sid, type: $type, statement: $statement,
                 status: $status, finding: $finding, whisper: $whisper, evidence: $evidence, cypher: $cypher,
-                at: datetime()})""", {
+                target: $target, at: datetime()})""", {"target": verdict.get("target"),
             "uid": utterance_id, "cid": cid, "sid": sid, "type": claim["type"], "statement": claim["statement"],
             "status": verdict["status"], "finding": verdict["finding"], "whisper": whisper,
             "evidence": json.dumps(verdict["evidence"]), "cypher": json.dumps(cypher)})

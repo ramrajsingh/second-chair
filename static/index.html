@@ -57,6 +57,10 @@
   #memo { position:fixed; inset:5% 10%; background:var(--panel); border:1px solid var(--line); border-radius:12px; box-shadow:0 20px 60px #0006; display:none; flex-direction:column; z-index:5; }
   #memo .scroll { padding:16px 22px; }
   #memo table { border-collapse:collapse; width:100%; } #memo td, #memo th { border:1px solid var(--line); padding:4px 6px; text-align:left; }
+  #suggest { margin:8px 12px 0; display:none; font-size:13px; }
+  #suggest button { margin:4px 6px 0 0; padding:4px 10px; border-style:dashed; }
+  .addrow { display:flex; gap:6px; padding:8px 12px; border-top:1px solid var(--line); }
+  .addrow input { flex:1; }
   .legend { display:flex; gap:10px; flex-wrap:wrap; padding:6px 12px; font-size:11px; color:var(--muted); border-top:1px solid var(--line); }
   .legend span::before { content:""; display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:4px; background:var(--c); }
   @media (max-width: 1000px) { main { grid-template-columns:1fr; height:auto; } }
@@ -85,17 +89,20 @@
   <section class="panel">
     <h2>Whispers &amp; verified claims</h2>
     <div id="whisper"></div>
+    <div id="suggest"><span style="color:var(--muted)">Mentioned on the call, not in the dossier:</span><div id="chips"></div></div>
     <div id="claims" class="scroll"><em style="color:var(--muted)">Claims the founder makes appear here, checked against Crustdata data in Neo4j.</em></div>
   </section>
   <div class="col" style="grid-template-rows: 1.2fr 1fr;">
     <section class="panel">
       <h2>Dossier graph (Neo4j)</h2>
       <div id="graph"></div>
-      <div class="legend"><span style="--c:#2563eb">Company</span><span style="--c:#7c3aed">Person</span><span style="--c:#64748b">Past company</span><span style="--c:#0891b2">Round</span><span style="--c:#d97706">Investor</span><span style="--c:#16a34a">Verified</span><span style="--c:#dc2626">Contradicted</span></div>
+      <div class="legend"><span style="--c:#2563eb">Company</span><span style="--c:#7c3aed">Person</span><span style="--c:#64748b">Past company</span><span style="--c:#0891b2">Round</span><span style="--c:#d97706">Investor</span><span style="--c:#db2777">Added on call</span><span style="--c:#16a34a">Verified</span><span style="--c:#dc2626">Contradicted</span></div>
     </section>
     <section class="panel">
       <h2>Dossier (Crustdata)</h2>
       <div id="dossier" class="scroll"><em style="color:var(--muted)">Built before the call so live checks never wait on an API.</em></div>
+      <div id="added" style="padding:0 12px"></div>
+      <div class="addrow"><input id="addInput" type="text" placeholder="Add company (domain or name) or person (profile URL)" disabled><button id="addBtn" disabled>Add</button></div>
     </section>
   </div>
 </main>
@@ -105,7 +112,7 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 let sid = null, script = [], scriptIdx = 0, queue = [], player = new Audio(), claimCount = 0;
 const COLORS = { company:"#2563eb", person:"#7c3aed", past_company:"#64748b", round:"#0891b2", investor:"#d97706",
-                 claim_verified:"#16a34a", claim_contradicted:"#dc2626", claim_unverifiable:"#ca8a04" };
+                 added_company:"#db2777", added_person:"#db2777", claim_verified:"#16a34a", claim_contradicted:"#dc2626", claim_unverifiable:"#ca8a04" };
 const nodes = new vis.DataSet(), edges = new vis.DataSet();
 new vis.Network($("graph"), { nodes, edges }, {
   nodes: { shape:"dot", size:13, font:{ size:11, color:getComputedStyle(document.body).color, multi:false } },
@@ -164,6 +171,35 @@ function addClaim(c) {
   }
 }
 
+function addSuggestion(m) {
+  $("suggest").style.display = "block";
+  const b = document.createElement("button");
+  b.textContent = `➕ ${m.name} (${m.kind})`;
+  b.onclick = () => {
+    const value = m.kind === "person" ? prompt(`Profile URL for ${m.name}:`) : m.name;
+    if (value) addEntity(value, b);
+  };
+  $("chips").appendChild(b);
+}
+async function addEntity(value, chip) {
+  $("status").textContent = `Adding ${value} from Crustdata…`;
+  if (chip) chip.disabled = true;
+  try {
+    const r = await api(`/api/session/${sid}/dossier/add`, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ value }) });
+    const a = r.added;
+    const detail = a.kind === "company"
+      ? `${a.headcount ?? "?"} people${a.yoy != null ? ` (${a.yoy > 0 ? "+" : ""}${Math.round(a.yoy)}% YoY)` : ""} · raised ${a.funding ? "$" + (a.funding / 1e6).toFixed(1) + "M" : "?"}`
+      : (a.roles || []).slice(0, 3).map((x) => `${esc(x.title)} · ${esc(x.company)}`).join("<br>");
+    $("added").insertAdjacentHTML("beforeend", `<div class="card" style="border-left-color:#db2777"><span class="st" style="color:#db2777">added · ${a.kind}</span> <b>${esc(a.name)}</b><div class="src">${detail}</div></div>`);
+    for (const c of r.rechecked || []) addClaim(c);
+    setGraph(r.graph);
+    if (chip) chip.remove();
+    $("status").textContent = `${a.name} added to the dossier in ${r.ms} ms. Claims about it can now be checked.`;
+  } catch (e) { $("status").textContent = "Couldn't add: " + e.message; if (chip) chip.disabled = false; }
+}
+$("addBtn").onclick = () => { const v = $("addInput").value.trim(); if (v) { $("addInput").value = ""; addEntity(v); } };
+$("addInput").onkeydown = (e) => e.key === "Enter" && $("addBtn").click();
+
 async function send(channel, form) {
   form.append("channel", channel);
   const r = await api(`/api/session/${sid}/utterance`, { method:"POST", body:form });
@@ -171,6 +207,7 @@ async function send(channel, form) {
   addUtterance(r.utterance);
   if (r.subject_audio && r.subject_audio.length) play(r.subject_audio);
   for (const c of r.claims) addClaim(c);
+  for (const m of r.suggestions || []) addSuggestion(m);
   if (r.claims.length) setGraph((await api(`/api/session/${sid}/graph`)).graph);
   $("status").textContent = `⏱ ${Object.entries(r.timing_ms).map(([k, v]) => k + " " + v + "ms").join(" · ")}`;
 }
@@ -223,7 +260,8 @@ $("prepare").onclick = async () => {
     sid = r.session_id; claimCount = 0; scriptIdx = 0;
     $("transcript").innerHTML = ""; $("claims").innerHTML = ""; $("whisper").style.display = "none";
     nodes.clear(); setGraph(r.graph); renderDossier(r.dossier, r.open_items);
-    ["micA", "micB", "textA", "textB", "script", "end"].forEach((id) => ($(id).disabled = false));
+    ["micA", "micB", "textA", "textB", "script", "end", "addInput", "addBtn"].forEach((id) => ($(id).disabled = false));
+    $("added").innerHTML = ""; $("chips").innerHTML = ""; $("suggest").style.display = "none";
     $("status").textContent = `Dossier ready in ${r.ms} ms. Call is live.`;
     $("scriptPos").textContent = "writing demo lines…"; script = [];
     api(`/api/session/${sid}/demo_lines`).then((d) => { script = d.lines; $("scriptPos").textContent = `0/${script.length}`; })
