@@ -442,17 +442,20 @@ def graph(sid: str):
         return nid
 
     co = rows["c"]
-    cnode = node(f"co:{co['key']}", f"{co['name']}\n{co.get('headcount') or '?'} people", "company")
+    cnode = node(f"co:{co['key']}", f"{co.get('name') or co['key']}\n{co.get('headcount') or '?'} people", "company")
     for f in rows["founders"]:
-        edges.append({"from": node(f"p:{f['pid']}", f["name"], "person"), "to": cnode, "label": "FOUNDED"})
+        edges.append({"from": node(f"p:{f['pid']}", f.get("name") or f["pid"], "person"), "to": cnode, "label": "FOUNDED"})
     for f, title, o in rows["jobs"]:
         if f and o and o["key"] != co["key"]:
-            edges.append({"from": f"p:{f['pid']}", "to": node(f"co:{o['key']}", o["name"], "past_company"),
+            edges.append({"from": f"p:{f['pid']}", "to": node(f"co:{o['key']}", o.get("name") or o["key"], "past_company"),
                           "label": title or "WORKED_AT"})
     for r, i, lead in rows["funding"]:
         if r:
-            rn = node(f"r:{r['round_type']}:{r['date']}", f"{(r['round_type'] or '').replace('_', ' ').title()}\n"
-                      f"${(r['amount_usd'] or 0) / 1e6:.1f}M", "round")
+            # Neo4j omits null properties, so a round with no amount or type simply lacks those keys.
+            amount = r.get("amount_usd")
+            rn = node(f"r:{r.get('round_type')}:{r.get('date')}",
+                      f"{(r.get('round_type') or 'round').replace('_', ' ').title()}\n"
+                      + (f"${amount / 1e6:.1f}M" if amount else "amount undisclosed"), "round")
             edges.append({"from": cnode, "to": rn, "label": "RAISED"})
             if i:
                 edges.append({"from": node(f"i:{i['name']}", i["name"], "investor"), "to": rn,

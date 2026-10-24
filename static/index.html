@@ -237,7 +237,7 @@ function renderDossier(d, openItems) {
     <table>
       <tr><td class="k">Headcount</td><td>${c.headcount ?? "?"} ${c.growth_yoy_pct != null ? `(${c.growth_yoy_pct > 0 ? "+" : ""}${c.growth_yoy_pct}% YoY)` : ""}</td></tr>
       <tr><td class="k">Total raised</td><td>${c.total_funding_usd ? "$" + (c.total_funding_usd / 1e6).toFixed(1) + "M" : "?"}</td></tr>
-      ${(d.rounds || []).map((r) => `<tr><td class="k">${esc(r.date)} · ${esc((r.round || "").replace("_", " "))}</td><td>$${((r.amount_usd || 0) / 1e6).toFixed(1)}M · ${esc(r.investors.join(", "))}</td></tr>`).join("")}
+      ${(d.rounds || []).map((r) => `<tr><td class="k">${esc(r.date)} · ${esc((r.round || "").replace("_", " "))}</td><td>${r.amount_usd ? "$" + (r.amount_usd / 1e6).toFixed(1) + "M" : "amount undisclosed"} · ${esc((r.investors || []).join(", "))}</td></tr>`).join("")}
       <tr><td class="k">Open roles</td><td>${c.openings ?? "?"}</td></tr>
       <tr><td class="k">Founders</td><td>${(d.founders || []).map((f) => esc(f.name) + " (" + esc(f.title) + ")" + authBadge(f.authenticity)).join("<br>")}</td></tr>
       ${p ? `<tr><td class="k">${esc(p.person.name)}${authBadge(p.person.authenticity_verdict)}${p.person.followers != null ? `<br><span class="src">${p.person.followers} followers</span>` : ""}</td><td>${p.roles.map((r) => `${esc(r.title)} · ${esc(r.company)} <span style="color:var(--muted)">${esc((r.start || "").slice(0, 7))}–${esc((r.end || "now").slice(0, 7))}</span>`).join("<br>")}</td></tr>` : ""}
