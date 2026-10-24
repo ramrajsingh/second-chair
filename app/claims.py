@@ -64,6 +64,14 @@ WHISPER_PROMPT = """You whisper into an interviewer's ear during a live diligenc
 made and the contradicting data, write ONE sentence of at most 25 words: what the data shows, then a sharp follow-up
 question to ask. No preamble. Example: "He says 200 people; data shows 84, down 12% this year. Ask what drove attrition." """
 
+DEMO_LINES_PROMPT = """You write test lines for demoing a diligence copilot. Given a dossier of real company and founder
+data, write 6 short things the founder might say on an investor call, in the first person, natural and spoken:
+- 3 lines that are ACCURATE per the dossier (e.g. funding total, a real investor, a real past role, co-founder overlap)
+- 3 lines that are INFLATED or wrong (e.g. headcount about double the real number, "we tripled the team" when growth
+  is flat or negative, a more senior title at a real past employer, a funding amount well above the real total)
+Use only facts present in the dossier; skip claim types the dossier has no data for. Mix the order. Make one line
+Hinglish (Hindi in Latin script mixed with English). Return JSON: {"lines": ["...", ...]}."""
+
 MEMO_PROMPT = """Write a concise diligence memo in Markdown from the call record below. Sections: Summary (2-3 sentences),
 Claims checked (a table: claim, verdict, evidence with source), Red flags, Questions for the next call. Every factual
 statement must cite its source as [Crustdata: <field>] or [Call: <speaker quote>]. No speculation beyond the data."""
@@ -272,6 +280,13 @@ class ClaimEngine:
             "status": verdict["status"], "finding": verdict["finding"], "whisper": whisper,
             "evidence": json.dumps(verdict["evidence"]), "cypher": json.dumps(cypher)})
         return cid
+
+    def demo_lines(self, card: dict) -> list[str]:
+        resp = self.llm.chat.completions.create(
+            model=config.OPENAI_MODEL, response_format={"type": "json_object"},
+            messages=[{"role": "system", "content": DEMO_LINES_PROMPT},
+                      {"role": "user", "content": json.dumps(card, ensure_ascii=False, default=str)}])
+        return json.loads(resp.choices[0].message.content or "{}").get("lines", [])[:8]
 
     def memo(self, record: dict) -> str:
         resp = self.llm.chat.completions.create(

@@ -56,7 +56,15 @@ def enrich_company(domain: str) -> dict | None:
     return _first_match(_cached("company", {"domains": [domain], "fields": COMPANY_FIELDS}), "company_data")
 
 
-def enrich_person(profile_url: str) -> dict | None:
-    """Employment history with titles and dates, education and skills."""
-    return _first_match(_cached("person", {"professional_network_profile_urls": [profile_url],
-                                           "fields": PERSON_FIELDS}), "person_data")
+def enrich_people(profile_urls: list[str]) -> list[dict]:
+    """Employment history with titles and dates, education and skills, for up to 25 profiles in one call.
+    Returns person_data in input order; profiles Crustdata can't match are skipped."""
+    resp = _cached("person", {"professional_network_profile_urls": profile_urls[:25], "fields": PERSON_FIELDS})
+    by_url = {e.get("matched_on"): e for e in resp or []}
+    people = []
+    for url in profile_urls[:25]:
+        entry = by_url.get(url) or (resp[0] if not config.CRUSTDATA_API_KEY and resp else None)
+        match = _first_match([entry], "person_data") if entry else None
+        if match and match not in people:
+            people.append(match)
+    return people

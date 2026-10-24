@@ -66,7 +66,7 @@
 <header>
   <h1>Second Chair <span style="font-weight:400;font-size:12px;color:var(--muted)">· live diligence copilot</span></h1>
   <input id="domain" type="text" placeholder="company domain" style="width:190px">
-  <input id="person" type="text" placeholder="founder profile URL (optional)" style="width:280px">
+  <input id="person" type="text" placeholder="founder profile URLs, comma-separated (first = on the call)" style="width:360px">
   <button id="prepare" class="primary">Build dossier &amp; start call</button>
   <button id="end" disabled>End call → memo</button>
   <span id="mode" class="pill"></span>
@@ -182,7 +182,7 @@ function sendText(channel, input, speak) {
 $("textA").onkeydown = (e) => e.key === "Enter" && sendText("interviewer", $("textA"));
 $("textB").onkeydown = (e) => e.key === "Enter" && sendText("subject", $("textB"), true);
 $("script").onclick = () => {
-  if (scriptIdx >= script.length) return;
+  if (!script.length || scriptIdx >= script.length) return;
   const f = new FormData(); f.append("text", script[scriptIdx++]); f.append("speak", "true");
   $("scriptPos").textContent = `${scriptIdx}/${script.length}`;
   send("subject", f).catch((e) => ($("status").textContent = "Error: " + e.message));
@@ -219,13 +219,15 @@ $("micB").onclick = () => toggleChannel("subject", $("micB"), () => navigator.me
 $("prepare").onclick = async () => {
   $("status").textContent = "Building dossier from Crustdata into Neo4j…"; $("prepare").disabled = true;
   try {
-    const r = await api("/api/session/prepare", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ company_domain:$("domain").value, person_url:$("person").value }) });
+    const r = await api("/api/session/prepare", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ company_domain:$("domain").value, founder_urls:$("person").value }) });
     sid = r.session_id; claimCount = 0; scriptIdx = 0;
     $("transcript").innerHTML = ""; $("claims").innerHTML = ""; $("whisper").style.display = "none";
     nodes.clear(); setGraph(r.graph); renderDossier(r.dossier, r.open_items);
     ["micA", "micB", "textA", "textB", "script", "end"].forEach((id) => ($(id).disabled = false));
-    $("scriptPos").textContent = `0/${script.length}`;
     $("status").textContent = `Dossier ready in ${r.ms} ms. Call is live.`;
+    $("scriptPos").textContent = "writing demo lines…"; script = [];
+    api(`/api/session/${sid}/demo_lines`).then((d) => { script = d.lines; $("scriptPos").textContent = `0/${script.length}`; })
+      .catch(() => ($("scriptPos").textContent = "no demo lines"));
   } catch (e) { $("status").textContent = "Error: " + e.message; }
   $("prepare").disabled = false;
 };
@@ -242,8 +244,7 @@ $("closeMemo").onclick = () => ($("memo").style.display = "none");
 (async () => {
   const cfg = await api("/api/config");
   $("mode").textContent = cfg.live_data ? "Crustdata: live" : "Crustdata: sample data";
-  $("domain").value = cfg.sample.company_domain; $("person").value = cfg.sample.person_url;
-  script = (await api("/api/demo_script")).lines;
+  if (!cfg.live_data) { $("domain").value = cfg.sample.company_domain; $("person").value = cfg.sample.founder_urls; }
 })().catch((e) => ($("status").textContent = "Server error: " + e.message));
 </script>
 </body>

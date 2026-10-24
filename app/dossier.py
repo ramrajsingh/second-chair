@@ -98,21 +98,19 @@ def load_company(db: Neo, data: dict) -> str:
     return ckey
 
 
-def build(db: Neo, company_domain: str, person_url: str | None = None) -> dict:
-    """Fetch from Crustdata and load into the graph. Returns the keys for the session."""
+def build(db: Neo, company_domain: str, founder_urls: list[str] | None = None) -> dict:
+    """Fetch from Crustdata and load into the graph. The first founder URL is the person on the call;
+    all given founders are linked with FOUNDED so co-founder overlap checks work for any team."""
     company = crustdata.enrich_company(company_domain)
     if not company:
         raise ValueError(f"Crustdata has no company for {company_domain!r}")
     ckey = load_company(db, company)
-    pid = None
-    if person_url:
-        person = crustdata.enrich_person(person_url)
-        if person:
-            pid = load_person(db, person, founded_key=None)
-    if pid is None:  # default to the first founder
+    pids = [load_person(db, p, founded_key=ckey) for p in crustdata.enrich_people(founder_urls)] \
+        if founder_urls else []
+    if not pids:  # default to the founders Crustdata lists for the company
         founders = (company.get("people") or {}).get("founders") or []
-        pid = _person_id(founders[0]) if founders else None
-    return {"company_key": ckey, "person_pid": pid}
+        pids = [_person_id(f) for f in founders]
+    return {"company_key": ckey, "person_pid": pids[0] if pids else None}
 
 
 def summary(db: Neo, ckey: str, pid: str | None) -> dict:

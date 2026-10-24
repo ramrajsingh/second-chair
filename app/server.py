@@ -5,6 +5,7 @@
 
 import json
 import logging
+import re
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -41,17 +42,32 @@ def index():
 def api_config():
     return {"live_data": bool(config.CRUSTDATA_API_KEY),
             "sample": {"company_domain": "nimbusfreight.example",
-                       "person_url": "https://www.linkedin.com/in/arjun-mehta-nimbus-demo"}}
+                       "founder_urls": "https://www.linkedin.com/in/arjun-mehta-nimbus-demo"}}
 
 
-@app.get("/api/demo_script")
-def demo_script():
-    return json.loads((config.ROOT / "data" / "demo_script.json").read_text())
+@app.get("/api/session/{sid}/demo_lines")
+def demo_lines(sid: str):
+    """Founder lines for a scripted demo: the hand-written script for the sample company, otherwise
+    generated from the real dossier (a mix of accurate and inflated claims), so any company can be demoed."""
+    s = sessions.get(sid)
+    if not s:
+        raise HTTPException(404, "Unknown session")
+    if "demo_lines" not in s:
+        if s["company_key"] == "nimbusfreight.example":
+            s["demo_lines"] = json.loads((config.ROOT / "data" / "demo_script.json").read_text())["lines"]
+        else:
+            s["demo_lines"] = engine.demo_lines(dossier.summary(db, s["company_key"], s["person_pid"]))
+    return {"lines": s["demo_lines"]}
 
 
 class Prepare(BaseModel):
     company_domain: str
-    person_url: str | None = None
+    founder_urls: str | list[str] | None = None  # comma/newline separated; the first is on the call
+
+
+def _urls(v) -> list[str]:
+    items = v if isinstance(v, list) else re.split(r"[,\s]+", v or "")
+    return [u.strip() for u in items if u.strip().startswith("http")]
 
 
 @app.post("/api/session/prepare")
@@ -59,7 +75,8 @@ def prepare(req: Prepare):
     """Pre-call: fetch Crustdata into Neo4j and open a session. No API calls happen during the call."""
     t0 = time.time()
     try:
-        keys = dossier.build(db, req.company_domain.strip(), (req.person_url or "").strip() or None)
+        domain = re.sub(r"^https?://(www\.)?", "", req.company_domain.strip()).strip("/")
+        keys = dossier.build(db, domain, _urls(req.founder_urls))
         card = dossier.summary(db, keys["company_key"], keys["person_pid"])
     except (CrustdataError, GraphError, ValueError) as e:
         raise HTTPException(502, str(e))
@@ -126,6 +143,8 @@ def utterance(sid: str, channel: str = Form(...), audio: UploadFile | None = Fil
         t = time.time()
         claims = []
         for c in engine.extract(heard.english, context):
+            if c["type"] == "funding_round" and c["number"] is None and not c["investor"]:
+                continue  # a round mentioned with nothing checkable (no amount, no investor)
             if signature(c) not in s["seen"]:  # a claim repeated later in the call is checked once
                 s["seen"].add(signature(c))
                 claims.append(c)

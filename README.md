@@ -47,7 +47,9 @@ cp .env.example .env        # Neo4j, Sarvam, OpenAI; Crustdata optional
 .venv/bin/uvicorn app.server:app --port 8010
 ```
 
-Open http://localhost:8010 and click **Build dossier & start call**. Without `CRUSTDATA_API_KEY` it uses `data/sample_dossier.json` (a fictional founder and company). With a key, enter a real company domain and founder profile URL.
+Open http://localhost:8010, enter a **company domain** and the **founders' profile URLs** (comma-separated; the first is the person on the call; leave empty to use the founders Crustdata lists), then click **Build dossier & start call**. Without `CRUSTDATA_API_KEY` it uses `data/sample_dossier.json` (a fictional founder and company).
+
+**Demo on any company:** after the dossier loads, **▶ Next scripted founder line** plays lines generated from that company's real data: some accurate, some inflated. You see both verified and contradicted verdicts without a second person on the call.
 
 Feed the call in any combination:
 - **🎙 Mic:** the interviewer's microphone.
